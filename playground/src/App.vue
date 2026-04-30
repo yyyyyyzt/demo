@@ -2,10 +2,10 @@
   <div class="debug-page">
     <header class="debug-header">
       <h1>点赞动画调试</h1>
-      <p class="hint">右下角连点：动画立刻播放；数字经防抖 + 模拟延迟后才增加（贴近真实接口）。</p>
+      <p class="hint">右下角连点：动画立刻播放；本轮先 +1，接口返回正确总数后覆盖展示。</p>
       <p class="log">
         展示点赞数：<strong>{{ count }}</strong>
-        <span v-if="queued > 0" class="badge">待合并：{{ queued }}</span>
+        <span v-if="pendingSync" class="badge">待同步</span>
         <span v-if="sending" class="badge is-sending">请求中…</span>
       </p>
     </header>
@@ -101,23 +101,24 @@ const count = ref(10)
 const burstSize = ref(1)
 const maxParticles = ref(48)
 const size = ref(54)
-const durationMin = ref(1600)
-const durationMax = ref(2200)
+const durationMin = ref(1350)
+const durationMax = ref(2550)
 const showCount = ref(true)
 
 const waitMs = ref(1800)
 const latencyMs = ref(600)
-const riseRange = ref(210)
-const swayMax = ref(40)
-const driftMax = ref(108)
+const riseRange = ref(149)
+const swayMax = ref(10)
+const driftMax = ref(38)
 
-const riseMin = computed(() => Math.round(riseRange.value * 0.78))
-const riseMax = computed(() => Math.round(riseRange.value * 1.18))
-const swayMin = computed(() => Math.max(6, Math.round(swayMax.value * 0.35)))
-const driftMin = computed(() => Math.max(16, Math.round(driftMax.value * 0.28)))
+const riseMin = computed(() => Math.round(riseRange.value - 30))
+const riseMax = computed(() => Math.round(riseRange.value + 30))
+const swayMin = computed(() => Math.max(4, Math.round(swayMax.value * 0.4)))
+const driftMin = computed(() => Math.max(10, Math.round(driftMax.value * 0.28)))
 
-const queued = ref(0)
+const pendingSync = ref(false)
 const sending = ref(false)
+const serverCount = ref(count.value)
 let throttle = null
 
 const cssSnippet = computed(
@@ -133,14 +134,17 @@ const cssSnippet = computed(
 }`,
 )
 
-function syncQueued() {
-  queued.value = throttle ? throttle.queued : 0
+function syncPendingState() {
+  pendingSync.value = throttle ? throttle.hasPendingSync : false
 }
 
 function onLike(payload) {
   if (payload && typeof payload === 'object' && 'delta' in payload) {
-    throttle?.tap(payload.delta)
-    syncQueued()
+    const shouldOptimisticLike = throttle?.tap() ?? true
+    if (shouldOptimisticLike) {
+      count.value += 1
+    }
+    syncPendingState()
     return
   }
 }
@@ -150,14 +154,19 @@ function rebuildThrottle() {
   throttle = new LikeRequestThrottle({
     waitMs: waitMs.value,
     latencyMs: latencyMs.value,
-    onCommit: async (delta) => {
+    onCommit: async () => {
       sending.value = true
-      count.value += delta
+      serverCount.value += 1
+      count.value = serverCount.value
       sending.value = false
-      syncQueued()
+      pendingSync.value = false
+    },
+    onError: () => {
+      sending.value = false
+      pendingSync.value = false
     },
   })
-  syncQueued()
+  syncPendingState()
 }
 
 onMounted(() => {
