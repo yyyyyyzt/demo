@@ -257,6 +257,15 @@ onBeforeUnmount(() => {
 <style scoped>
 /* 迁移到纯 CSS 时：把下面变量挂到 .live-like 同节点即可（与 rootStyle 一致） */
 .live-like {
+  --like-size: 54px;
+  --like-emoji-font: 30px;
+  --like-float-rise-min: 119px;
+  --like-float-rise-max: 179px;
+  --like-float-drift-max: 38px;
+  --like-float-sway-max: 10px;
+  --like-float-dur-min: 1350ms;
+  --like-float-dur-max: 2550ms;
+
   position: relative;
   display: flex;
   flex-direction: column;
