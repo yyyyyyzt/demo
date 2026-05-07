@@ -148,20 +148,36 @@ const likeThrottle = new LikeRequestThrottle({
 })
 ```
 
-## 腾讯直播 · 观众进房示例
+## 腾讯直播 · SDK 调试面板
 
-为了让研发侧能快速验证“可以从腾讯直播间取到房间信息”，仓库新增了一段
-真实可跑的观众进房示例：
+为了让研发侧自闭环验证“可以从腾讯直播间取到房间信息”，仓库内置了一段
+真实可跑的调试面板，主播侧 / 观众侧 API 都覆盖：
 
 - `examples/tencentLiveAudience.js`：基于 `tuikit-atomicx-vue3`（AtomicXCore SDK）
-  封装了 `login` / `joinLive` / `fetchLiveInfo` / `queryMetaData` / `leaveLive`
-  / 事件订阅等观众侧 API，使用动态 `import` 懒加载 SDK，不影响点赞主包体积。
+  封装了 `login` / `startLive` / `endLive` / `joinLive` / `leaveLive`
+  / `fetchLiveInfo` / `fetchLiveList` / `queryMetaData` / `updateLiveMetaData`
+  / 事件订阅，以及随机 `liveId` / `metaData` 生成器。SDK 使用动态 `import` 懒加载，
+  不影响点赞主包体积。
 - `components/TencentLiveAudiencePanel.vue`：调试面板，已挂在 Vite playground 中。
-  填入 `SDKAppID / userId / userSig / liveId` 即可真实进房，并把 `fetchLiveInfo`
-  与 `queryMetaData` 返回的房间信息以 JSON 形式展示出来，**不渲染视频画面**，仅用于
-  证明“可以拿到房间数据”。
+  支持「仅登录 / 主播开播 + 写随机 metaData / 结束 / 观众进房 / 离开 /
+  独立调用 fetchLiveInfo / queryMetaData / fetchLiveList」等所有调试动作，
+  **不渲染视频画面**，仅以 JSON 形式打印返回值。
 
-最小调用示例（可直接复制到任何 Vue3 工程）：
+### ⚠️ SDK 入参形态踩坑（已在示例中规范化）
+
+`tuikit-atomicx-vue3` 的部分接口签名容易踩雷，典型报错形如
+`$q: Cannot pass non-string to std::string`：
+
+| 接口 | 错误写法 | 正确写法 |
+| ---- | -------- | -------- |
+| `login` | `sdkAppId: '1400...'`（string） | `sdkAppId: 1400000000`（**number**） |
+| `joinLive` | `joinLive('liveId')` | `joinLive({ liveId: 'xxx' })` |
+| `fetchLiveInfo` | `fetchLiveInfo({ liveId })` | `fetchLiveInfo('xxx')`（**直接字符串**） |
+| `queryMetaData` | `queryMetaData(['k1'])` | `queryMetaData({ keys: ['k1'] })` |
+| `updateLiveMetaData` | `updateLiveMetaData({ a: 1 })` | `updateLiveMetaData({ metaData: JSON.stringify({a:1}) })` |
+| `liveId` 类型 | 传 number | 始终传 **string**（即便看起来是纯数字） |
+
+### 最小调用示例（观众侧）
 
 ```js
 import { useLoginState, useLiveListState } from 'tuikit-atomicx-vue3'
@@ -177,15 +193,24 @@ await login({
 
 await joinLive({ liveId: 'test_live_room_001' })
 
-const liveInfo = await fetchLiveInfo({ liveId: 'test_live_room_001' })
+const liveInfo = await fetchLiveInfo('test_live_room_001')
 console.log('房间信息:', liveInfo)
-// liveInfo: { liveName, notice, liveOwner, totalViewerCount, coverUrl, ... }
 
 const meta = await queryMetaData({ keys: ['currentGoodsId', 'countdown'] })
 console.log('房间元数据:', meta)
 
 await leaveLive()
 ```
+
+### 调试建议
+
+如果生产环境拉不到房间信息：
+
+1. 打开 playground 调试面板，仅登录后点 **fetchLiveInfo（不进房）**，确认服务端有这个房。
+2. 用面板「填随机字符串 ID / 填随机数字串 ID」两个按钮各开一次播，对照取信息。
+   两种 ID 都能正常工作，能排除“以为是数字 ID 的兼容性问题”。
+3. 用 **fetchLiveList** 查一下当前 SDKAppID 下能看到的全部直播间，
+   核对房间是否真的在线、是否 `isPublicVisible: false`。
 
 参考文档：
 
