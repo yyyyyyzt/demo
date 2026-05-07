@@ -70,6 +70,8 @@
       <pre class="snippet-pre">{{ cssSnippet }}</pre>
     </section>
 
+    <TencentLiveAudiencePanel />
+
     <div class="like-dock">
       <LiveLikeButton
         await-server-count
@@ -93,9 +95,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import LiveLikeButton from '@components/LiveLikeButton.vue'
 import { LikeRequestThrottle } from '@utils/LikeRequestThrottle.js'
+
+const TencentLiveAudiencePanel = defineAsyncComponent(
+  () => import('@components/TencentLiveAudiencePanel.vue'),
+)
 
 const count = ref(10)
 const burstSize = ref(1)
