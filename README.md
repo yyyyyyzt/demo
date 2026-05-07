@@ -147,3 +147,47 @@ const likeThrottle = new LikeRequestThrottle({
   },
 })
 ```
+
+## 腾讯直播 · 观众进房示例
+
+为了让研发侧能快速验证“可以从腾讯直播间取到房间信息”，仓库新增了一段
+真实可跑的观众进房示例：
+
+- `examples/tencentLiveAudience.js`：基于 `tuikit-atomicx-vue3`（AtomicXCore SDK）
+  封装了 `login` / `joinLive` / `fetchLiveInfo` / `queryMetaData` / `leaveLive`
+  / 事件订阅等观众侧 API，使用动态 `import` 懒加载 SDK，不影响点赞主包体积。
+- `components/TencentLiveAudiencePanel.vue`：调试面板，已挂在 Vite playground 中。
+  填入 `SDKAppID / userId / userSig / liveId` 即可真实进房，并把 `fetchLiveInfo`
+  与 `queryMetaData` 返回的房间信息以 JSON 形式展示出来，**不渲染视频画面**，仅用于
+  证明“可以拿到房间数据”。
+
+最小调用示例（可直接复制到任何 Vue3 工程）：
+
+```js
+import { useLoginState, useLiveListState } from 'tuikit-atomicx-vue3'
+
+const { login } = useLoginState()
+const { joinLive, fetchLiveInfo, queryMetaData, leaveLive } = useLiveListState()
+
+await login({
+  sdkAppId: 1400000000,
+  userId: 'viewer_001',
+  userSig: '<服务端生成的 userSig>',
+})
+
+await joinLive({ liveId: 'test_live_room_001' })
+
+const liveInfo = await fetchLiveInfo({ liveId: 'test_live_room_001' })
+console.log('房间信息:', liveInfo)
+// liveInfo: { liveName, notice, liveOwner, totalViewerCount, coverUrl, ... }
+
+const meta = await queryMetaData({ keys: ['currentGoodsId', 'countdown'] })
+console.log('房间元数据:', meta)
+
+await leaveLive()
+```
+
+参考文档：
+
+- [快速接入（Web）](https://www.tencentcloud.com/zh/document/product/1071/76729)
+- [LiveListStore API（含 queryMetaData）](https://cloud.tencent.com/document/product/647/128564#api-queryMetaData)
