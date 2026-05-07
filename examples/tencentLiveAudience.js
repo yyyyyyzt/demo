@@ -83,7 +83,10 @@ export async function fetchLiveInfo(liveId) {
   if (!liveId) throw new Error('缺少 liveId')
   const { useLiveListState } = await loadSdk()
   const { fetchLiveInfo } = useLiveListState()
-  return await fetchLiveInfo({ liveId })
+  // ⚠️ SDK 签名是 fetchLiveInfo(liveId: string)，入参直接是字符串，
+  // 不是 { liveId } 对象。传对象会让底层 getLiveInfo({ roomId: <obj> })
+  // 把对象往 C++ 层送，报 "Cannot pass non-string to std::string"。
+  return await fetchLiveInfo(liveId)
 }
 
 /**
