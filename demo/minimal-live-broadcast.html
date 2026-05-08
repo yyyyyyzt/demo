@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>极简 Canvas 开播（TUILiveKit 直播间）</title>
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4d;
+      --text: #e6edf3;
+      --muted: #8b9cb3;
+      --accent: #3b82f6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+    }
+    h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 12px; }
+    .layout { display: grid; gap: 16px; max-width: 960px; margin: 0 auto; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .grid-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px 14px;
+      align-items: end;
+    }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    label span { font-weight: 500; }
+    input[type="text"],
+    input[type="number"],
+    textarea,
+    select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+      width: 100%;
+    }
+    textarea { min-height: 56px; resize: vertical; font-family: inherit; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .preview-wrap {
+      position: relative;
+      background: #000;
+      border-radius: 10px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      max-height: 52vh;
+    }
+    .preview-wrap.portrait {
+      aspect-ratio: 9 / 16;
+      max-height: 70vh;
+      margin: 0 auto;
+      max-width: min(100%, 360px);
+    }
+    #localView {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    canvas#srcCanvas { display: none; }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+      margin-top: 8px;
+    }
+    .hint code { font-size: 11px; }
+    .log {
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      max-height: 160px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .status-live {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: #dc2626;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+      display: none;
+    }
+    .status-live.on { display: block; }
+    .title-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 8px 12px;
+      background: linear-gradient(transparent, rgba(0,0,0,.75));
+      font-size: 13px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <header>
+      <h1>单页开播 · Canvas 画面 · TUILiveKit 直播间（可看直播管理后台）</h1>
+      <p class="hint">
+        与「只调 TRTC enterRoom」不同：这里走 <strong>TUIRoomEngine</strong> 的 <code>startLive</code>，
+        会在直播业务侧创建<strong>直播间</strong>，便于你在
+        <a href="https://cloud.tencent.com/document/product/647/123012" style="color: var(--accent);">直播管理系统</a>
+        等后台看到房间与监控。<code>strRoomId</code> 即各端统一的直播间 ID（liveId）。
+        画面仍通过 Canvas 采集；底层使用 RoomEngine 返回的 <code>TRTCCloud</code> 发布自定义视频轨（内部接口 <code>_startPublishVideoTrack</code>）。
+      </p>
+    </header>
+
+    <section class="panel">
+      <div class="grid-form">
+        <label>
+          <span>SDKAppID</span>
+          <input id="sdkAppId" type="number" inputmode="numeric" placeholder="1400000000" />
+        </label>
+        <label>
+          <span>userId（与 UserSig 一致）</span>
+          <input id="userId" type="text" autocomplete="off" placeholder="anchor_01" />
+        </label>
+        <label class="span-2" style="grid-column: span 2;">
+          <span>UserSig</span>
+          <textarea id="userSig" placeholder="服务端或调试工具生成的票据"></textarea>
+        </label>
+        <label>
+          <span>strRoomId（直播间 ID）</span>
+          <input id="strRoomId" type="text" placeholder="live_demo_room_001" />
+        </label>
+        <label>
+          <span>房间标题（写入 startLive.name）</span>
+          <input id="liveTitle" type="text" placeholder="我的测试直播" />
+        </label>
+        <label>
+          <span>公告（可选）</span>
+          <input id="notice" type="text" placeholder="选填" />
+        </label>
+        <label>
+          <span>观看端画面方向</span>
+          <select id="orientation">
+            <option value="landscape">横屏 16:9</option>
+            <option value="portrait">竖屏 9:16（手机全屏）</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn-primary" id="btnStart">开播（startLive + Canvas）</button>
+        <button type="button" class="btn-ghost" id="btnStop" disabled>结束直播（stopLive）</button>
+      </div>
+      <p class="hint">
+        本地预览：推荐使用 <code>npx --yes serve -l 3333</code> 或 <code>python3 -m http.server 3333</code>，
+        打开 <code>http://127.0.0.1:3333/demo/minimal-live-broadcast.html</code>。
+        ES 模块从 jsDelivr 拉取 <code>@tencentcloud/tuiroom-engine-js</code>（需可访问外网 CDN）。
+      </p>
+    </section>
+
+    <section class="panel">
+      <div id="previewWrap" class="preview-wrap">
+        <div id="liveBadge" class="status-live">LIVE</div>
+        <div id="titleBar" class="title-bar"></div>
+        <video id="localView" playsinline autoplay muted></video>
+      </div>
+      <canvas id="srcCanvas" width="1280" height="720"></canvas>
+    </section>
+
+    <section class="panel">
+      <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">日志</div>
+      <div id="log" class="log"></div>
+    </section>
+  </div>
+
+  <script type="module">
+    import TUIRoomEngine, {
+      TUIVideoStreamType,
+      TUIResolutionMode,
+      TUIRoomType,
+    } from 'https://cdn.jsdelivr.net/npm/@tencentcloud/tuiroom-engine-js@4.0.5/+esm';
+
+    const $ = (id) => document.getElementById(id);
+    const logEl = $('log');
+    function log(msg, isErr) {
+      const line = '[' + new Date().toISOString().slice(11, 19) + '] ' + msg;
+      logEl.textContent += line + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+      if (isErr) console.error(msg);
+      else console.log(msg);
+    }
+
+    const sdkAppIdEl = $('sdkAppId');
+    const userIdEl = $('userId');
+    const userSigEl = $('userSig');
+    const strRoomIdEl = $('strRoomId');
+    const liveTitleEl = $('liveTitle');
+    const noticeEl = $('notice');
+    const orientationEl = $('orientation');
+    const previewWrap = $('previewWrap');
+    const liveBadge = $('liveBadge');
+    const titleBar = $('titleBar');
+    const localView = $('localView');
+    const canvas = $('srcCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let roomEngine = null;
+    let captureTimer = null;
+    let mediaStream = null;
+    let animPhase = 0;
+    let isLive = false;
+    let lockedOrientation = orientationEl.value;
+
+    function sizeCanvas() {
+      const portrait = orientationEl.value === 'portrait';
+      if (portrait) {
+        canvas.width = 720;
+        canvas.height = 1280;
+        previewWrap.classList.add('portrait');
+      } else {
+        canvas.width = 1280;
+        canvas.height = 720;
+        previewWrap.classList.remove('portrait');
+      }
+    }
+
+    function drawFrame() {
+      const w = canvas.width;
+      const h = canvas.height;
+      animPhase += 0.04;
+      const g = ctx.createLinearGradient(0, 0, w, h);
+      g.addColorStop(0, '#1e3a5f');
+      g.addColorStop(0.5, '#0d9488');
+      g.addColorStop(1, '#6d28d9');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+
+      const cx = w / 2 + Math.sin(animPhase) * (w * 0.25);
+      const cy = h / 2 + Math.cos(animPhase * 1.3) * (h * 0.15);
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.min(w, h) * 0.08, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = 'bold ' + Math.floor(Math.min(w, h) * 0.06) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Canvas Demo', w / 2, h * 0.12);
+
+      ctx.font = Math.floor(Math.min(w, h) * 0.028) + 'px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillText('t=' + animPhase.toFixed(2), w / 2, h * 0.92);
+    }
+
+    function startCanvasLoop() {
+      function tick() {
+        drawFrame();
+        captureTimer = requestAnimationFrame(tick);
+      }
+      tick();
+    }
+
+    function stopCanvasLoop() {
+      if (captureTimer != null) {
+        cancelAnimationFrame(captureTimer);
+        captureTimer = null;
+      }
+    }
+
+    $('btnStart').addEventListener('click', async () => {
+      const sdkAppId = Number(sdkAppIdEl.value);
+      const userId = userIdEl.value.trim();
+      const userSig = userSigEl.value.trim();
+      const strRoomId = strRoomIdEl.value.trim();
+      const liveTitle = liveTitleEl.value.trim() || '未命名直播';
+      const notice = noticeEl.value.trim();
+
+      if (!sdkAppId || !userId || !userSig || !strRoomId) {
+        log('请填写 SDKAppID、userId、UserSig、strRoomId', true);
+        return;
+      }
+
+      $('btnStart').disabled = true;
+      try {
+        sizeCanvas();
+        titleBar.textContent = liveTitle;
+        document.title = liveTitle + ' · 直播中';
+
+        startCanvasLoop();
+        mediaStream = canvas.captureStream(15);
+        const videoTrack = mediaStream.getVideoTracks()[0];
+        if (!videoTrack) throw new Error('无法从 Canvas 取得视频轨');
+
+        await TUIRoomEngine.callExperimentalAPI(
+          JSON.stringify({
+            api: 'setFramework',
+            params: { component: 'LiveCoreView', language: 'vue3' },
+          }),
+        );
+        await TUIRoomEngine.callExperimentalAPI(
+          JSON.stringify({
+            api: 'enableUnlimitedRoom',
+            params: { enable: true },
+          }),
+        );
+
+        await TUIRoomEngine.login({ sdkAppId, userId, userSig });
+        log('TUIRoomEngine 登录成功');
+
+        roomEngine = TUIRoomEngine.getInstance();
+
+        const portrait = orientationEl.value === 'portrait';
+        /** 与 tuikit SeatLayoutTemplate：横屏 200，竖屏方向可用 600（动态宫格） */
+        const seatLayoutTemplateId = portrait ? 600 : 200;
+
+        const liveListManager = roomEngine.getLiveListManager();
+        await liveListManager.startLive({
+          roomId: strRoomId,
+          name: liveTitle,
+          notice: notice || undefined,
+          roomType: TUIRoomType.kLive,
+          seatLayoutTemplateId,
+        });
+        log('startLive 成功（直播间已注册，管理后台可检索该 roomId）');
+
+        await roomEngine.setVideoResolutionMode({
+          streamType: TUIVideoStreamType.kCameraStream,
+          resolutionMode: portrait
+            ? TUIResolutionMode.kResolutionMode_Portrait
+            : TUIResolutionMode.kResolutionMode_Landscape,
+        });
+
+        try {
+          await roomEngine.closeLocalCamera();
+        } catch (_) {}
+
+        const trtcCloud = roomEngine.getTRTCCloud();
+        await trtcCloud.updateLocalView(localView);
+        await trtcCloud._startPublishVideoTrack({ videoTrack });
+        log('已开始推送 Canvas 视频轨（' + canvas.width + '×' + canvas.height + '）');
+
+        liveBadge.classList.add('on');
+        $('btnStop').disabled = false;
+        isLive = true;
+        lockedOrientation = orientationEl.value;
+      } catch (e) {
+        log('开播失败: ' + (e && e.message ? e.message : String(e)), true);
+        stopCanvasLoop();
+        if (mediaStream) {
+          mediaStream.getTracks().forEach((t) => t.stop());
+          mediaStream = null;
+        }
+        try {
+          const lm = roomEngine && roomEngine.getLiveListManager();
+          if (lm) await lm.stopLive();
+        } catch (_) {}
+        try {
+          await TUIRoomEngine.logout();
+        } catch (_) {}
+        roomEngine = null;
+        liveBadge.classList.remove('on');
+        $('btnStart').disabled = false;
+      }
+    });
+
+    $('btnStop').addEventListener('click', async () => {
+      $('btnStop').disabled = true;
+      try {
+        stopCanvasLoop();
+        if (roomEngine) {
+          const trtcCloud = roomEngine.getTRTCCloud();
+          try {
+            await trtcCloud._stopPublishVideoTrack();
+          } catch (_) {}
+          try {
+            await trtcCloud.stopLocalPreview();
+          } catch (_) {}
+          try {
+            await roomEngine.getLiveListManager().stopLive();
+            log('stopLive 成功');
+          } catch (e) {
+            log('stopLive: ' + (e && e.message ? e.message : String(e)), true);
+          }
+        }
+        if (mediaStream) {
+          mediaStream.getTracks().forEach((t) => t.stop());
+          mediaStream = null;
+        }
+        localView.srcObject = null;
+        try {
+          await TUIRoomEngine.logout();
+        } catch (_) {}
+        roomEngine = null;
+        liveBadge.classList.remove('on');
+        document.title = '极简 Canvas 开播（TUILiveKit 直播间）';
+        isLive = false;
+      } finally {
+        $('btnStart').disabled = false;
+      }
+    });
+
+    orientationEl.addEventListener('change', () => {
+      if (isLive) {
+        log('直播中无法切换横竖屏，请先结束直播。', true);
+        orientationEl.value = lockedOrientation;
+        return;
+      }
+      lockedOrientation = orientationEl.value;
+      sizeCanvas();
+      drawFrame();
+    });
+
+    window.addEventListener('beforeunload', () => {
+      if (roomEngine) TUIRoomEngine.logout().catch(() => {});
+    });
+
+    sizeCanvas();
+    drawFrame();
+    log('就绪。填写参数后点击开播。');
+  </script>
+</body>
+</html>
