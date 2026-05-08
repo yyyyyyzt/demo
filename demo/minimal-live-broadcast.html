@@ -127,6 +127,35 @@
       font-size: 13px;
       pointer-events: none;
     }
+    details.adv-panel {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    details.adv-panel summary {
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--muted);
+      user-select: none;
+    }
+    label.chk {
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+    }
+    label.chk input { width: auto; accent-color: var(--accent); }
+    label.chk span { color: var(--text); font-size: 13px; }
+    .seat-only { display: none; }
+    .seat-only.is-on { display: flex; }
+    label.seat-only.is-on:not(.chk) { flex-direction: column; }
+    label.chk.seat-only.is-on { flex-direction: row; align-items: center; }
+    details.trouble {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    details.trouble summary { cursor: pointer; margin-bottom: 6px; }
   </style>
 </head>
 <body>
@@ -176,6 +205,75 @@
           </select>
         </label>
       </div>
+
+      <details class="adv-panel">
+        <summary>startLive 扩展参数（与观众端「直播间」能力对齐；单机位 Canvas 建议关闭麦位）</summary>
+        <div class="grid-form" style="margin-top: 10px;">
+          <label class="chk">
+            <input type="checkbox" id="advSeat" />
+            <span>开启麦位 isSeatEnabled（对应 seatLayoutTemplateId / 连麦布局）</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="advGift" />
+            <span>启用礼物 isGiftEnabled</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="advLike" />
+            <span>启用点赞 isLikeEnabled</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="advPublic" checked />
+            <span>公开可见 isPublicVisible（列表可发现）</span>
+          </label>
+          <label class="chk seat-only" id="keepOwnerRow">
+            <input type="checkbox" id="advKeepOwner" />
+            <span>房主上麦 keepOwnerOnSeat</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="advMsgDisable" />
+            <span>全员禁言 isMessageDisableForAllUser</span>
+          </label>
+          <label class="seat-only" id="maxSeatRow">
+            <span>最大麦位数 maxSeatCount（开启麦位时）</span>
+            <input id="maxSeatCount" type="number" min="1" max="16" value="8" />
+          </label>
+          <label>
+            <span>封面 coverUrl（可选）</span>
+            <input id="coverUrl" type="text" placeholder="https://..." />
+          </label>
+          <label>
+            <span>背景 backgroundUrl（可选）</span>
+            <input id="backgroundUrl" type="text" placeholder="https://..." />
+          </label>
+          <label>
+            <span>分类 categoryList（可选，逗号分隔数字）</span>
+            <input id="categoryList" type="text" placeholder="例：1, 2" />
+          </label>
+          <label>
+            <span>活动 activityStatus（可选，整数）</span>
+            <input id="activityStatus" type="number" inputmode="numeric" placeholder="留空不传" />
+          </label>
+        </div>
+      </details>
+
+      <details class="trouble">
+        <summary>观众端报错如何排查（PK / review / WebRTC）</summary>
+        <p>
+          <strong>live_engine_pk / 100411</strong>：表示当前房间<strong>没有进行中的 PK</strong>，服务端返回「battle 不存在或已过期」在<strong>无 PK 场景下是预期现象</strong>。
+          若仅刷屏日志：可在业务端忽略该错误，或将 TUILiveKit / RoomEngine 升级到最新；与是否「创建房间多传参」无必然关系。
+        </p>
+        <p>
+          <strong>Cannot read properties of null (reading 'review')</strong>：多为观众端业务或 UI 组件假设了某字段（如审核、扩展信息）一定存在。
+          请对直播元数据使用可选链（<code>liveInfo?.xxx</code>），并与正式主播端创建的字段结构对齐。
+        </p>
+        <p>
+          <strong>WebRTC reading 'type'</strong>：多为网络抖动、UserSig 过期、或移动端浏览器策略；请确认 HTTPS、票据未过期、主播仍在推流。
+        </p>
+        <p>
+          模板 <code>200 / 600</code> 在官方映射里会<strong>打开麦位布局</strong>。若只做单机位 Canvas、不需要连麦，请<strong>不要勾选「开启麦位」</strong>，且不必传 <code>seatLayoutTemplateId</code>，可减少观众端麦位/PK 相关模块的空数据访问。
+        </p>
+      </details>
+
       <div class="actions">
         <button type="button" class="btn-primary" id="btnStart">开播（startLive + Canvas）</button>
         <button type="button" class="btn-ghost" id="btnStop" disabled>结束直播（stopLive）</button>
@@ -207,6 +305,7 @@
       TUIVideoStreamType,
       TUIResolutionMode,
       TUIRoomType,
+      TUISeatMode,
     } from 'https://cdn.jsdelivr.net/npm/@tencentcloud/tuiroom-engine-js@4.0.5/+esm';
 
     const $ = (id) => document.getElementById(id);
@@ -339,18 +438,51 @@
         roomEngine = TUIRoomEngine.getInstance();
 
         const portrait = orientationEl.value === 'portrait';
-        /** 与 tuikit SeatLayoutTemplate：横屏 200，竖屏方向可用 600（动态宫格） */
-        const seatLayoutTemplateId = portrait ? 600 : 200;
-
-        const liveListManager = roomEngine.getLiveListManager();
-        await liveListManager.startLive({
+        const seatEnabled = $('advSeat').checked;
+        const livePayload = {
           roomId: strRoomId,
           name: liveTitle,
-          notice: notice || undefined,
           roomType: TUIRoomType.kLive,
-          seatLayoutTemplateId,
-        });
-        log('startLive 成功（直播间已注册，管理后台可检索该 roomId）');
+          isSeatEnabled: seatEnabled,
+          isGiftEnabled: $('advGift').checked,
+          isLikeEnabled: $('advLike').checked,
+          isPublicVisible: $('advPublic').checked,
+          isMessageDisableForAllUser: $('advMsgDisable').checked,
+        };
+        if (notice) livePayload.notice = notice;
+        const coverUrl = $('coverUrl').value.trim();
+        if (coverUrl) livePayload.coverUrl = coverUrl;
+        const backgroundUrl = $('backgroundUrl').value.trim();
+        if (backgroundUrl) livePayload.backgroundUrl = backgroundUrl;
+        const catRaw = $('categoryList').value.trim();
+        if (catRaw) {
+          livePayload.categoryList = catRaw.split(/[,，]/).map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
+        }
+        const actRaw = $('activityStatus').value.trim();
+        if (actRaw !== '') {
+          const n = parseInt(actRaw, 10);
+          if (!Number.isNaN(n)) livePayload.activityStatus = n;
+        }
+        if (seatEnabled) {
+          livePayload.keepOwnerOnSeat = $('advKeepOwner').checked;
+          /** 与 tuikit SeatLayoutTemplate：横屏 200，竖屏 600（麦位布局） */
+          livePayload.seatLayoutTemplateId = portrait ? 600 : 200;
+          livePayload.seatMode = TUISeatMode.kFreeToTake;
+          const mc = parseInt($('maxSeatCount').value, 10);
+          if (!Number.isNaN(mc) && mc > 0) livePayload.maxSeatCount = mc;
+        } else {
+          livePayload.keepOwnerOnSeat = false;
+        }
+
+        const liveListManager = roomEngine.getLiveListManager();
+        await liveListManager.startLive(livePayload);
+        log(
+          'startLive 成功（麦位=' +
+            seatEnabled +
+            '，礼物=' +
+            livePayload.isGiftEnabled +
+            '）· 管理后台可检索 roomId',
+        );
 
         await roomEngine.setVideoResolutionMode({
           streamType: TUIVideoStreamType.kCameraStream,
@@ -443,9 +575,17 @@
       if (roomEngine) TUIRoomEngine.logout().catch(() => {});
     });
 
+    function syncSeatFields() {
+      const on = $('advSeat').checked;
+      $('maxSeatRow').classList.toggle('is-on', on);
+      $('keepOwnerRow').classList.toggle('is-on', on);
+    }
+    $('advSeat').addEventListener('change', syncSeatFields);
+    syncSeatFields();
+
     sizeCanvas();
     drawFrame();
-    log('就绪。填写参数后点击开播。');
+    log('就绪。单机位演示建议展开「扩展参数」并保持麦位关闭。');
   </script>
 </body>
 </html>
