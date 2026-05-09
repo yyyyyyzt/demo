@@ -167,7 +167,8 @@
         会在直播业务侧创建<strong>直播间</strong>，便于你在
         <a href="https://cloud.tencent.com/document/product/647/123012" style="color: var(--accent);">直播管理系统</a>
         等后台看到房间与监控。<code>strRoomId</code> 即各端统一的直播间 ID（liveId）。
-        画面仍通过 Canvas 采集；底层使用 RoomEngine 返回的 <code>TRTCCloud</code> 发布自定义视频轨（内部接口 <code>_startPublishVideoTrack</code>）。
+        画面通过 Canvas 采集；底层使用 RoomEngine 返回的 <code>TRTCCloud</code> 发布自定义视频轨（<code>_startPublishVideoTrack</code>）。
+        音频可选：Web Audio 合成音、本地文件（<code>captureStream</code>）或麦克风；通过 TRTC 内部实例发布 <code>audioTrack</code>（演示用）。
       </p>
     </header>
 
@@ -203,6 +204,19 @@
             <option value="landscape">横屏 16:9</option>
             <option value="portrait">竖屏 9:16（手机全屏）</option>
           </select>
+        </label>
+        <label>
+          <span>推流音频</span>
+          <select id="audioMode">
+            <option value="none">无（仅画面）</option>
+            <option value="synth" selected>合成音（正弦波，免文件）</option>
+            <option value="file">本地 MP3 等（循环播放）</option>
+            <option value="mic">麦克风（人声）</option>
+          </select>
+        </label>
+        <label id="audioFileRow" class="audio-file-row" style="display: none">
+          <span>选择本地音频文件</span>
+          <input type="file" id="audioFile" accept="audio/*" />
         </label>
       </div>
 
@@ -338,6 +352,142 @@
     let animPhase = 0;
     let isLive = false;
     let lockedOrientation = orientationEl.value;
+
+    let liveAudioResources = null;
+
+    function syncAudioFileRow() {
+      const show = $('audioMode').value === 'file';
+      $('audioFileRow').style.display = show ? '' : 'none';
+    }
+    $('audioMode').addEventListener('change', syncAudioFileRow);
+    syncAudioFileRow();
+
+    function getInternalTRTC(trtcCloud) {
+      const trtc = trtcCloud._trtc;
+      if (!trtc) throw new Error('无法访问 TRTCCloud._trtc（自定义音轨不可用）');
+      return trtc;
+    }
+
+    async function createSynthAudio() {
+      const audioCtx = new AudioContext({ sampleRate: 48000 });
+      await audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = 440;
+      const gain = audioCtx.createGain();
+      gain.gain.value = 0.06;
+      const dest = audioCtx.createMediaStreamDestination();
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start();
+      const track = dest.stream.getAudioTracks()[0];
+      if (!track) throw new Error('合成音轨创建失败');
+      return {
+        track,
+        cleanup: () => {
+          try {
+            osc.stop();
+          } catch (_) {}
+          return audioCtx.close();
+        },
+      };
+    }
+
+    async function createFileAudio(file) {
+      const url = URL.createObjectURL(file);
+      const audio = new Audio();
+      audio.loop = true;
+      audio.src = url;
+      audio.crossOrigin = 'anonymous';
+      await audio.play();
+      const cap = audio.captureStream && audio.captureStream();
+      if (!cap || !cap.getAudioTracks().length) {
+        URL.revokeObjectURL(url);
+        throw new Error('当前浏览器不支持 HTMLAudioElement.captureStream，请换 Chrome/Edge 或改用合成音/麦克风');
+      }
+      const track = cap.getAudioTracks()[0];
+      return {
+        track,
+        url,
+        cleanup: () => {
+          try {
+            audio.pause();
+          } catch (_) {}
+          URL.revokeObjectURL(url);
+        },
+      };
+    }
+
+    async function createMicAudio() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const track = stream.getAudioTracks()[0];
+      if (!track) {
+        stream.getTracks().forEach((t) => t.stop());
+        throw new Error('未拿到麦克风音轨');
+      }
+      return {
+        track,
+        stream,
+        cleanup: () => {
+          stream.getTracks().forEach((t) => t.stop());
+        },
+      };
+    }
+
+    async function startPublishedAudio(trtcCloud) {
+      const mode = $('audioMode').value;
+      if (mode === 'none') {
+        log('推流音频：已关闭（仅画面）');
+        return;
+      }
+      const trtc = getInternalTRTC(trtcCloud);
+      let cleanup = () => {};
+      let audioTrack;
+      try {
+        if (mode === 'synth') {
+          const r = await createSynthAudio();
+          audioTrack = r.track;
+          cleanup = r.cleanup;
+        } else if (mode === 'file') {
+          const file = $('audioFile').files && $('audioFile').files[0];
+          if (!file) {
+            log('推流音频：未选择文件，已跳过', true);
+            return;
+          }
+          const r = await createFileAudio(file);
+          audioTrack = r.track;
+          cleanup = r.cleanup;
+        } else if (mode === 'mic') {
+          const r = await createMicAudio();
+          audioTrack = r.track;
+          cleanup = r.cleanup;
+        }
+        await trtc.startLocalAudio({
+          publish: true,
+          option: { audioTrack },
+        });
+        liveAudioResources = { cleanup };
+        log('推流音频：已开启（' + mode + '）');
+      } catch (e) {
+        try {
+          cleanup();
+        } catch (_) {}
+        liveAudioResources = null;
+        log('推流音频失败（将继续仅视频）: ' + (e && e.message ? e.message : String(e)), true);
+      }
+    }
+
+    async function stopPublishedAudio(trtcCloud) {
+      try {
+        await trtcCloud.stopLocalAudio();
+      } catch (_) {}
+      if (liveAudioResources) {
+        try {
+          liveAudioResources.cleanup();
+        } catch (_) {}
+        liveAudioResources = null;
+      }
+    }
 
     function sizeCanvas() {
       const portrait = orientationEl.value === 'portrait';
@@ -500,6 +650,8 @@
         await trtcCloud._startPublishVideoTrack({ videoTrack });
         log('已开始推送 Canvas 视频轨（' + canvas.width + '×' + canvas.height + '）');
 
+        await startPublishedAudio(trtcCloud);
+
         liveBadge.classList.add('on');
         $('btnStop').disabled = false;
         isLive = true;
@@ -511,6 +663,9 @@
           mediaStream.getTracks().forEach((t) => t.stop());
           mediaStream = null;
         }
+        try {
+          if (roomEngine) await stopPublishedAudio(roomEngine.getTRTCCloud());
+        } catch (_) {}
         try {
           const lm = roomEngine && roomEngine.getLiveListManager();
           if (lm) await lm.stopLive();
@@ -530,6 +685,9 @@
         stopCanvasLoop();
         if (roomEngine) {
           const trtcCloud = roomEngine.getTRTCCloud();
+          try {
+            await stopPublishedAudio(trtcCloud);
+          } catch (_) {}
           try {
             await trtcCloud._stopPublishVideoTrack();
           } catch (_) {}
