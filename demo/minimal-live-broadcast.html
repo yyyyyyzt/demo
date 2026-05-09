@@ -145,10 +145,6 @@
     }
     label.chk input { width: auto; accent-color: var(--accent); }
     label.chk span { color: var(--text); font-size: 13px; }
-    .seat-only { display: none; }
-    .seat-only.is-on { display: flex; }
-    label.seat-only.is-on:not(.chk) { flex-direction: column; }
-    label.chk.seat-only.is-on { flex-direction: row; align-items: center; }
     details.trouble {
       margin-top: 10px;
       font-size: 12px;
@@ -235,7 +231,7 @@
         <div class="grid-form" style="margin-top: 10px;">
           <label class="chk">
             <input type="checkbox" id="advSeat" />
-            <span>多人连麦（提高 maxSeatCount；不勾选则为单机位 maxSeatCount=1）</span>
+            <span>多人连麦布局（横 201 / 竖 601；不勾选为单机位 200/600。与「模板 ID」不能同传 maxSeatCount）</span>
           </label>
           <label class="chk">
             <input type="checkbox" id="advGift" />
@@ -256,10 +252,6 @@
           <label class="chk">
             <input type="checkbox" id="advMsgDisable" />
             <span>全员禁言 isMessageDisableForAllUser</span>
-          </label>
-          <label class="seat-only" id="maxSeatRow">
-            <span>最大麦位数 maxSeatCount（仅「多人连麦」时生效）</span>
-            <input id="maxSeatCount" type="number" min="2" max="16" value="8" />
           </label>
           <label>
             <span>封面 coverUrl（可选）</span>
@@ -294,11 +286,11 @@
           <strong>WebRTC reading 'type'</strong>：多为网络抖动、UserSig 过期、或移动端浏览器策略；请确认 HTTPS、票据未过期、主播仍在推流。
         </p>
         <p>
-          <strong>seat / 100211「seat is not enabled」</strong>：直播间若 <code>isSeatEnabled: false</code>，部分 TUIRoomEngine 仍会同步麦位列表导致报错。
-          本页已<strong>固定开启麦位</strong>，单机位使用 <code>maxSeatCount: 1</code>；仅需多人连麦时再勾选「多人连麦」并调大上限。
+          <strong>seat / 100211</strong>：未开启麦位时 SDK 仍可能同步麦位；本页固定 <code>isSeatEnabled: true</code>。
         </p>
         <p>
-          模板 <code>200 / 600</code> 用于横/竖屏麦位布局示意。
+          <strong>startLive：template_id 与 maxSeatCount 不可同时传</strong>：服务端要求 <code>seatLayoutTemplateId</code>（200–999）与 <code>maxSeatCount</code> 二选一。
+          本页只传模板 ID（单机位 200/600，多人 201/601），不再传 <code>maxSeatCount</code>。
         </p>
       </details>
 
@@ -732,6 +724,7 @@
       }
 
       $('btnStart').disabled = true;
+      let liveRoomCreated = false;
       try {
         sizeCanvas();
         titleBar.textContent = liveTitle;
@@ -761,9 +754,9 @@
         roomEngine = TUIRoomEngine.getInstance();
 
         const portrait = orientationEl.value === 'portrait';
-        /** RoomEngine 会同步麦位信息：必须 isSeatEnabled=true，否则会报 100211 */
         const multiSeat = $('advSeat').checked;
-        const mcParsed = parseInt($('maxSeatCount').value, 10);
+        /** WASM：seatLayoutTemplateId(200–999) 与 maxSeatCount 禁止同时传入（否则 -1001） */
+        const seatLayoutTemplateId = multiSeat ? (portrait ? 601 : 201) : portrait ? 600 : 200;
         const livePayload = {
           roomId: strRoomId,
           name: liveTitle,
@@ -771,10 +764,7 @@
           isSeatEnabled: true,
           keepOwnerOnSeat: $('advKeepOwner').checked,
           seatMode: TUISeatMode.kFreeToTake,
-          seatLayoutTemplateId: portrait ? 600 : 200,
-          maxSeatCount: multiSeat
-            ? (!Number.isNaN(mcParsed) && mcParsed >= 2 ? Math.min(16, mcParsed) : 8)
-            : 1,
+          seatLayoutTemplateId,
           isGiftEnabled: $('advGift').checked,
           isLikeEnabled: $('advLike').checked,
           isPublicVisible: $('advPublic').checked,
@@ -797,9 +787,11 @@
 
         const liveListManager = roomEngine.getLiveListManager();
         await liveListManager.startLive(livePayload);
+        liveRoomCreated = true;
         log(
-          'startLive 成功（麦位已开启·maxSeatCount=' +
-            livePayload.maxSeatCount +
+          'startLive 成功（seatLayoutTemplateId=' +
+            seatLayoutTemplateId +
+            (multiSeat ? '·多人模板' : '·单机位模板') +
             '，礼物=' +
             livePayload.isGiftEnabled +
             '）· 管理后台可检索 roomId',
@@ -838,8 +830,9 @@
           if (roomEngine) await stopPublishedAudio(roomEngine.getTRTCCloud());
         } catch (_) {}
         try {
-          const lm = roomEngine && roomEngine.getLiveListManager();
-          if (lm) await lm.stopLive();
+          if (liveRoomCreated && roomEngine) {
+            await roomEngine.getLiveListManager().stopLive();
+          }
         } catch (_) {}
         try {
           await TUIRoomEngine.logout();
@@ -904,16 +897,9 @@
       if (roomEngine) TUIRoomEngine.logout().catch(() => {});
     });
 
-    function syncSeatFields() {
-      const multi = $('advSeat').checked;
-      $('maxSeatRow').classList.toggle('is-on', multi);
-    }
-    $('advSeat').addEventListener('change', syncSeatFields);
-    syncSeatFields();
-
     sizeCanvas();
     drawFrame();
-    log('就绪。麦位默认开启（maxSeatCount=1）；多人连麦请勾选并设置上限。');
+    log('就绪。麦位已开启；单机位模板 200/600，多人 201/601（不传 maxSeatCount）。');
   </script>
 </body>
 </html>
