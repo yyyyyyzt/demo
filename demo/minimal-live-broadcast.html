@@ -199,6 +199,16 @@
           <input id="notice" type="text" placeholder="选填" />
         </label>
         <label>
+          <span>Canvas 测试图（对比接收端清晰度）</span>
+          <select id="canvasPattern">
+            <option value="gradient_demo">渐变 + 运动小球（默认）</option>
+            <option value="siemens_star">西门子星（径向分辨率）</option>
+            <option value="smpte_bars">SMPTE 彩条（色彩 / 亮度）</option>
+            <option value="grid_text">网格 + 细文字 + 渐变条（锐利度 / banding）</option>
+            <option value="zone_plate">Zone Plate 同心环（伪摩尔纹 / 解析力）</option>
+          </select>
+        </label>
+        <label>
           <span>观看端画面方向</span>
           <select id="orientation">
             <option value="landscape">横屏 16:9</option>
@@ -296,6 +306,7 @@
         本地预览：推荐使用 <code>npx --yes serve -l 3333</code> 或 <code>python3 -m http.server 3333</code>，
         打开 <code>http://127.0.0.1:3333/demo/minimal-live-broadcast.html</code>。
         ES 模块从 jsDelivr 拉取 <code>@tencentcloud/tuiroom-engine-js</code>（需可访问外网 CDN）。
+        <strong>Canvas 测试图</strong>可在开播前或直播中切换，用于对比接收端清晰度；若 Web 观众端偏糊，可同时检查观众端是否用小窗拉流、码率档位与 TRTC 大小流策略。
       </p>
     </section>
 
@@ -502,10 +513,7 @@
       }
     }
 
-    function drawFrame() {
-      const w = canvas.width;
-      const h = canvas.height;
-      animPhase += 0.04;
+    function drawPatternGradientDemo(w, h, t) {
       const g = ctx.createLinearGradient(0, 0, w, h);
       g.addColorStop(0, '#1e3a5f');
       g.addColorStop(0.5, '#0d9488');
@@ -513,8 +521,8 @@
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, w, h);
 
-      const cx = w / 2 + Math.sin(animPhase) * (w * 0.25);
-      const cy = h / 2 + Math.cos(animPhase * 1.3) * (h * 0.15);
+      const cx = w / 2 + Math.sin(t) * (w * 0.25);
+      const cy = h / 2 + Math.cos(t * 1.3) * (h * 0.15);
       ctx.beginPath();
       ctx.arc(cx, cy, Math.min(w, h) * 0.08, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
@@ -527,7 +535,168 @@
 
       ctx.font = Math.floor(Math.min(w, h) * 0.028) + 'px monospace';
       ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.fillText('t=' + animPhase.toFixed(2), w / 2, h * 0.92);
+      ctx.fillText('t=' + t.toFixed(2), w / 2, h * 0.92);
+    }
+
+    /** 西门子星：黑白径向楔，慢旋可观察运动拖尾 */
+    function drawPatternSiemensStar(w, h, t) {
+      ctx.fillStyle = '#202020';
+      ctx.fillRect(0, 0, w, h);
+      const cx = w / 2;
+      const cy = h / 2;
+      const size = Math.min(w, h) * 0.85;
+      const spokes = 36;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(t * 0.35);
+      for (let i = 0; i < spokes; i++) {
+        ctx.rotate(Math.PI / spokes);
+        const gradient = ctx.createLinearGradient(0, 0, size / 2, 0);
+        gradient.addColorStop(0, i % 2 === 0 ? '#ffffff' : '#000000');
+        gradient.addColorStop(1, i % 2 === 0 ? '#000000' : '#ffffff');
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(size / 2, (-size) / 10);
+        ctx.lineTo(size / 2, size / 10);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.arc(0, 0, size / 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.font = Math.floor(Math.min(w, h) * 0.022) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Siemens Star · rotate', cx, h - Math.min(w, h) * 0.03);
+    }
+
+    /** 简化 SMPTE 风格彩条（75% 档主条 + 底部分区） */
+    function drawPatternSMPTE(w, h) {
+      const barWidth = Math.floor(w / 7);
+      const colors = ['#c0c0c0', '#c0c000', '#00c0c0', '#00c000', '#c000c0', '#0000c0', '#c00000'];
+      const topH = h * 0.67;
+      for (let i = 0; i < 7; i++) {
+        ctx.fillStyle = colors[i];
+        ctx.fillRect(i * barWidth, 0, barWidth + 1, topH);
+      }
+      const y0 = topH;
+      const bh = h - y0;
+      const q = barWidth;
+      ctx.fillStyle = '#131313';
+      ctx.fillRect(0, y0, w, bh);
+      ctx.fillStyle = '#00214c';
+      ctx.fillRect(0, y0, q * 3, bh * 0.55);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(q * 3, y0, q * 4, bh * 0.55);
+      ctx.fillStyle = '#320050';
+      ctx.fillRect(0, y0 + bh * 0.55, q * 2, bh * 0.45);
+      ctx.fillStyle = '#090909';
+      ctx.fillRect(q * 2, y0 + bh * 0.55, q * 2, bh * 0.45);
+      ctx.fillStyle = '#1d1d1d';
+      ctx.fillRect(q * 4, y0 + bh * 0.55, q * 3, bh * 0.45);
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.font = Math.floor(Math.min(w, h) * 0.022) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('SMPTE-style bars (simplified)', w / 2, y0 + bh * 0.38);
+    }
+
+    /** 网格 + 多字号文字 + 水平渐变条（锐利度 / color banding） */
+    function drawPatternGridText(w, h, t) {
+      ctx.fillStyle = '#141820';
+      ctx.fillRect(0, 0, w, h);
+      const step = Math.max(10, Math.floor(Math.min(w, h) / 48));
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= w; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= h; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+      const bandH = Math.min(h * 0.12, 96);
+      const g = ctx.createLinearGradient(0, 0, w, 0);
+      for (let i = 0; i <= 16; i++) {
+        g.addColorStop(i / 16, i % 2 === 0 ? '#2a2a40' : '#5a5a78');
+      }
+      ctx.fillStyle = g;
+      ctx.fillRect(0, h * 0.08, w, bandH);
+      const fs1 = Math.max(14, Math.floor(Math.min(w, h) * 0.038));
+      const fs2 = Math.max(11, Math.floor(Math.min(w, h) * 0.024));
+      const fs3 = Math.max(9, Math.floor(Math.min(w, h) * 0.018));
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold ' + fs1 + 'px ui-sans-serif, Arial';
+      ctx.fillText('清晰度测试 Sharpness · ABCDEFG0123456789', step * 1.5, h * 0.28);
+      ctx.font = fs2 + 'px ui-monospace, monospace';
+      ctx.fillText('THE QUICK BROWN FOX 0123456789 · 细笔画笔画', step * 1.5, h * 0.28 + fs1 * 1.45);
+      ctx.font = fs3 + 'px ui-monospace, monospace';
+      ctx.fillText(
+        'abcdefghijklmnopqrstuvwxyz · 栅格 ' + step + 'px · t=' + t.toFixed(2),
+        step * 1.5,
+        h * 0.28 + fs1 * 1.45 + fs2 * 1.35,
+      );
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.font = Math.floor(fs2 * 0.9) + 'px sans-serif';
+      ctx.fillText('接收端若模糊：边缘糊、文字粘连、彩条偏色即码率/缩放导致', w / 2, h * 0.88);
+    }
+
+    /** 同心圆 Zone Plate：径向频率递增，外圈对应更高细节 */
+    function drawPatternZonePlate(w, h, t) {
+      ctx.fillStyle = '#080808';
+      ctx.fillRect(0, 0, w, h);
+      const cx = w / 2;
+      const cy = h / 2;
+      /** 块越大 CPU 越轻；过小可能卡顿 */
+      const px = Math.max(3, Math.round(Math.min(w, h) / 128));
+      for (let y = 0; y < h; y += px) {
+        for (let x = 0; x < w; x += px) {
+          const nx = (x - cx) / Math.min(w, h);
+          const ny = (y - cy) / Math.min(w, h);
+          const r2 = nx * nx + ny * ny;
+          const v = 0.5 + 0.5 * Math.cos(140 * r2 + t * 2);
+          const u = (v * 255) | 0;
+          ctx.fillStyle = 'rgb(' + u + ',' + u + ',' + u + ')';
+          ctx.fillRect(x, y, px, px);
+        }
+      }
+      ctx.fillStyle = 'rgba(255,180,80,0.9)';
+      ctx.font = Math.floor(Math.min(w, h) * 0.024) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Zone Plate · outer rings = finer detail', cx, h * 0.06);
+    }
+
+    function drawFrame() {
+      const w = canvas.width;
+      const h = canvas.height;
+      animPhase += 0.04;
+      const pattern = $('canvasPattern').value;
+      switch (pattern) {
+        case 'siemens_star':
+          drawPatternSiemensStar(w, h, animPhase);
+          break;
+        case 'smpte_bars':
+          drawPatternSMPTE(w, h);
+          break;
+        case 'grid_text':
+          drawPatternGridText(w, h, animPhase);
+          break;
+        case 'zone_plate':
+          drawPatternZonePlate(w, h, animPhase);
+          break;
+        case 'gradient_demo':
+        default:
+          drawPatternGradientDemo(w, h, animPhase);
+      }
     }
 
     function startCanvasLoop() {
