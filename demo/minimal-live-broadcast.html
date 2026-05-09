@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>极简 Canvas 直播（TRTC）</title>
-  <script src="https://cdn.jsdelivr.net/npm/trtc-sdk-v5@5.16.1-beta.12/trtc.js"></script>
+  <title>极简 Canvas 开播（TUILiveKit 直播间）</title>
   <style>
     :root {
       font-family: system-ui, sans-serif;
@@ -24,12 +23,7 @@
       padding: 16px;
     }
     h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 12px; }
-    .layout {
-      display: grid;
-      gap: 16px;
-      max-width: 960px;
-      margin: 0 auto;
-    }
+    .layout { display: grid; gap: 16px; max-width: 960px; margin: 0 auto; }
     .panel {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -77,7 +71,12 @@
       aspect-ratio: 16 / 9;
       max-height: 52vh;
     }
-    .preview-wrap.portrait { aspect-ratio: 9 / 16; max-height: 70vh; margin: 0 auto; max-width: min(100%, 360px); }
+    .preview-wrap.portrait {
+      aspect-ratio: 9 / 16;
+      max-height: 70vh;
+      margin: 0 auto;
+      max-width: min(100%, 360px);
+    }
     #localView {
       width: 100%;
       height: 100%;
@@ -88,9 +87,10 @@
     .hint {
       font-size: 12px;
       color: var(--muted);
-      line-height: 1.5;
+      line-height: 1.55;
       margin-top: 8px;
     }
+    .hint code { font-size: 11px; }
     .log {
       font-family: ui-monospace, monospace;
       font-size: 12px;
@@ -98,7 +98,7 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 10px;
-      max-height: 140px;
+      max-height: 160px;
       overflow: auto;
       white-space: pre-wrap;
       word-break: break-all;
@@ -127,15 +127,48 @@
       font-size: 13px;
       pointer-events: none;
     }
+    details.adv-panel {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    details.adv-panel summary {
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--muted);
+      user-select: none;
+    }
+    label.chk {
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+    }
+    label.chk input { width: auto; accent-color: var(--accent); }
+    label.chk span { color: var(--text); font-size: 13px; }
+    .seat-only { display: none; }
+    .seat-only.is-on { display: flex; }
+    label.seat-only.is-on:not(.chk) { flex-direction: column; }
+    label.chk.seat-only.is-on { flex-direction: row; align-items: center; }
+    details.trouble {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    details.trouble summary { cursor: pointer; margin-bottom: 6px; }
   </style>
 </head>
 <body>
   <div class="layout">
     <header>
-      <h1>单页极简开播 · Canvas 动态画面 · TRTC 直播场景</h1>
+      <h1>单页开播 · Canvas 画面 · TUILiveKit 直播间（可看直播管理后台）</h1>
       <p class="hint">
-        填写与 UserSig 一致的 SDKAppID、userId，以及房间 strRoomId（与观众端 / TUILiveKit 的 liveId 保持一致）。使用本地静态服务器打开本页（见下方命令）。
-        仅推送 Canvas 视频轨；不采集麦克风。横竖屏决定画布分辨率，便于手机端观看比例一致。
+        与「只调 TRTC enterRoom」不同：这里走 <strong>TUIRoomEngine</strong> 的 <code>startLive</code>，
+        会在直播业务侧创建<strong>直播间</strong>，便于你在
+        <a href="https://cloud.tencent.com/document/product/647/123012" style="color: var(--accent);">直播管理系统</a>
+        等后台看到房间与监控。<code>strRoomId</code> 即各端统一的直播间 ID（liveId）。
+        画面通过 Canvas 采集；底层使用 RoomEngine 返回的 <code>TRTCCloud</code> 发布自定义视频轨（<code>_startPublishVideoTrack</code>）。
+        音频可选：Web Audio 合成音、本地文件（<code>captureStream</code>）或麦克风；通过 TRTC 内部实例发布 <code>audioTrack</code>（演示用）。
       </p>
     </header>
 
@@ -146,7 +179,7 @@
           <input id="sdkAppId" type="number" inputmode="numeric" placeholder="1400000000" />
         </label>
         <label>
-          <span>userId（与 UserSig 对应）</span>
+          <span>userId（与 UserSig 一致）</span>
           <input id="userId" type="text" autocomplete="off" placeholder="anchor_01" />
         </label>
         <label class="span-2" style="grid-column: span 2;">
@@ -158,24 +191,122 @@
           <input id="strRoomId" type="text" placeholder="live_demo_room_001" />
         </label>
         <label>
-          <span>房间标题（仅本页展示）</span>
+          <span>房间标题（写入 startLive.name）</span>
           <input id="liveTitle" type="text" placeholder="我的测试直播" />
+        </label>
+        <label>
+          <span>公告（可选）</span>
+          <input id="notice" type="text" placeholder="选填" />
+        </label>
+        <label>
+          <span>Canvas 测试图（对比接收端清晰度）</span>
+          <select id="canvasPattern">
+            <option value="gradient_demo">渐变 + 运动小球（默认）</option>
+            <option value="siemens_star">西门子星（径向分辨率）</option>
+            <option value="smpte_bars">SMPTE 彩条（色彩 / 亮度）</option>
+            <option value="grid_text">网格 + 细文字 + 渐变条（锐利度 / banding）</option>
+            <option value="zone_plate">Zone Plate 同心环（伪摩尔纹 / 解析力）</option>
+          </select>
         </label>
         <label>
           <span>观看端画面方向</span>
           <select id="orientation">
-            <option value="landscape">横屏 16:9（推荐宽屏观看）</option>
+            <option value="landscape">横屏 16:9</option>
             <option value="portrait">竖屏 9:16（手机全屏）</option>
           </select>
         </label>
+        <label>
+          <span>推流音频</span>
+          <select id="audioMode">
+            <option value="none">无（仅画面）</option>
+            <option value="synth" selected>合成音（正弦波，免文件）</option>
+            <option value="file">本地 MP3 等（循环播放）</option>
+            <option value="mic">麦克风（人声）</option>
+          </select>
+        </label>
+        <label id="audioFileRow" class="audio-file-row" style="display: none">
+          <span>选择本地音频文件</span>
+          <input type="file" id="audioFile" accept="audio/*" />
+        </label>
       </div>
+
+      <details class="adv-panel">
+        <summary>startLive 扩展参数（与观众端「直播间」能力对齐；单机位 Canvas 建议关闭麦位）</summary>
+        <div class="grid-form" style="margin-top: 10px;">
+          <label class="chk">
+            <input type="checkbox" id="advSeat" />
+            <span>开启麦位 isSeatEnabled（对应 seatLayoutTemplateId / 连麦布局）</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="advGift" />
+            <span>启用礼物 isGiftEnabled</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="advLike" />
+            <span>启用点赞 isLikeEnabled</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="advPublic" checked />
+            <span>公开可见 isPublicVisible（列表可发现）</span>
+          </label>
+          <label class="chk seat-only" id="keepOwnerRow">
+            <input type="checkbox" id="advKeepOwner" />
+            <span>房主上麦 keepOwnerOnSeat</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="advMsgDisable" />
+            <span>全员禁言 isMessageDisableForAllUser</span>
+          </label>
+          <label class="seat-only" id="maxSeatRow">
+            <span>最大麦位数 maxSeatCount（开启麦位时）</span>
+            <input id="maxSeatCount" type="number" min="1" max="16" value="8" />
+          </label>
+          <label>
+            <span>封面 coverUrl（可选）</span>
+            <input id="coverUrl" type="text" placeholder="https://..." />
+          </label>
+          <label>
+            <span>背景 backgroundUrl（可选）</span>
+            <input id="backgroundUrl" type="text" placeholder="https://..." />
+          </label>
+          <label>
+            <span>分类 categoryList（可选，逗号分隔数字）</span>
+            <input id="categoryList" type="text" placeholder="例：1, 2" />
+          </label>
+          <label>
+            <span>活动 activityStatus（可选，整数）</span>
+            <input id="activityStatus" type="number" inputmode="numeric" placeholder="留空不传" />
+          </label>
+        </div>
+      </details>
+
+      <details class="trouble">
+        <summary>观众端报错如何排查（PK / review / WebRTC）</summary>
+        <p>
+          <strong>live_engine_pk / 100411</strong>：表示当前房间<strong>没有进行中的 PK</strong>，服务端返回「battle 不存在或已过期」在<strong>无 PK 场景下是预期现象</strong>。
+          若仅刷屏日志：可在业务端忽略该错误，或将 TUILiveKit / RoomEngine 升级到最新；与是否「创建房间多传参」无必然关系。
+        </p>
+        <p>
+          <strong>Cannot read properties of null (reading 'review')</strong>：多为观众端业务或 UI 组件假设了某字段（如审核、扩展信息）一定存在。
+          请对直播元数据使用可选链（<code>liveInfo?.xxx</code>），并与正式主播端创建的字段结构对齐。
+        </p>
+        <p>
+          <strong>WebRTC reading 'type'</strong>：多为网络抖动、UserSig 过期、或移动端浏览器策略；请确认 HTTPS、票据未过期、主播仍在推流。
+        </p>
+        <p>
+          模板 <code>200 / 600</code> 在官方映射里会<strong>打开麦位布局</strong>。若只做单机位 Canvas、不需要连麦，请<strong>不要勾选「开启麦位」</strong>，且不必传 <code>seatLayoutTemplateId</code>，可减少观众端麦位/PK 相关模块的空数据访问。
+        </p>
+      </details>
+
       <div class="actions">
-        <button type="button" class="btn-primary" id="btnStart">开播</button>
-        <button type="button" class="btn-ghost" id="btnStop" disabled>结束直播</button>
+        <button type="button" class="btn-primary" id="btnStart">开播（startLive + Canvas）</button>
+        <button type="button" class="btn-ghost" id="btnStop" disabled>结束直播（stopLive）</button>
       </div>
       <p class="hint">
-        推荐本地启动：<code>npx --yes serve -l 3333</code> 或 <code>python3 -m http.server 3333</code>，浏览器访问
-        <code>http://127.0.0.1:3333/demo/minimal-live-broadcast.html</code>
+        本地预览：推荐使用 <code>npx --yes serve -l 3333</code> 或 <code>python3 -m http.server 3333</code>，
+        打开 <code>http://127.0.0.1:3333/demo/minimal-live-broadcast.html</code>。
+        ES 模块从 jsDelivr 拉取 <code>@tencentcloud/tuiroom-engine-js</code>（需可访问外网 CDN）。
+        <strong>Canvas 测试图</strong>可在开播前或直播中切换，用于对比接收端清晰度；若 Web 观众端偏糊，可同时检查观众端是否用小窗拉流、码率档位与 TRTC 大小流策略。
       </p>
     </section>
 
@@ -194,225 +325,594 @@
     </section>
   </div>
 
-  <script>
-(function () {
-  const $ = (id) => document.getElementById(id);
-  const logEl = $('log');
-  function log(msg, isErr) {
-    const line = '[' + new Date().toISOString().slice(11, 19) + '] ' + msg;
-    logEl.textContent += line + '\n';
-    logEl.scrollTop = logEl.scrollHeight;
-    if (isErr) console.error(msg);
-    else console.log(msg);
-  }
+  <script type="module">
+    import TUIRoomEngine, {
+      TUIVideoStreamType,
+      TUIResolutionMode,
+      TUIRoomType,
+      TUISeatMode,
+    } from 'https://cdn.jsdelivr.net/npm/@tencentcloud/tuiroom-engine-js@4.0.5/+esm';
 
-  const sdkAppIdEl = $('sdkAppId');
-  const userIdEl = $('userId');
-  const userSigEl = $('userSig');
-  const strRoomIdEl = $('strRoomId');
-  const liveTitleEl = $('liveTitle');
-  const orientationEl = $('orientation');
-  const previewWrap = $('previewWrap');
-  const liveBadge = $('liveBadge');
-  const titleBar = $('titleBar');
-  const localView = $('localView');
-  const canvas = $('srcCanvas');
-  const ctx = canvas.getContext('2d');
-
-  let trtc = null;
-  let captureTimer = null;
-  let mediaStream = null;
-  let animPhase = 0;
-  let isLive = false;
-  let lockedOrientation = orientationEl.value;
-
-  function sizeCanvas() {
-    const portrait = orientationEl.value === 'portrait';
-    if (portrait) {
-      canvas.width = 720;
-      canvas.height = 1280;
-      previewWrap.classList.add('portrait');
-    } else {
-      canvas.width = 1280;
-      canvas.height = 720;
-      previewWrap.classList.remove('portrait');
-    }
-  }
-
-  function drawFrame() {
-    const w = canvas.width;
-    const h = canvas.height;
-    animPhase += 0.04;
-    const g = ctx.createLinearGradient(0, 0, w, h);
-    g.addColorStop(0, '#1e3a5f');
-    g.addColorStop(0.5, '#0d9488');
-    g.addColorStop(1, '#6d28d9');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
-
-    const cx = w / 2 + Math.sin(animPhase) * (w * 0.25);
-    const cy = h / 2 + Math.cos(animPhase * 1.3) * (h * 0.15);
-    ctx.beginPath();
-    ctx.arc(cx, cy, Math.min(w, h) * 0.08, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.fill();
-
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.font = 'bold ' + Math.floor(Math.min(w, h) * 0.06) + 'px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Canvas Demo', w / 2, h * 0.12);
-
-    ctx.font = Math.floor(Math.min(w, h) * 0.028) + 'px monospace';
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText('t=' + animPhase.toFixed(2), w / 2, h * 0.92);
-  }
-
-  function startCanvasLoop() {
-    function tick() {
-      drawFrame();
-      captureTimer = requestAnimationFrame(tick);
-    }
-    tick();
-  }
-
-  function stopCanvasLoop() {
-    if (captureTimer != null) {
-      cancelAnimationFrame(captureTimer);
-      captureTimer = null;
-    }
-  }
-
-  function bitrateForSize(w, h) {
-    const pixels = w * h;
-    if (pixels >= 1280 * 720) return 1500;
-    if (pixels >= 960 * 540) return 1000;
-    return 800;
-  }
-
-  $('btnStart').addEventListener('click', async () => {
-    const sdkAppId = Number(sdkAppIdEl.value);
-    const userId = userIdEl.value.trim();
-    const userSig = userSigEl.value.trim();
-    const strRoomId = strRoomIdEl.value.trim();
-    const liveTitle = liveTitleEl.value.trim() || '未命名直播';
-
-    if (!sdkAppId || !userId || !userSig || !strRoomId) {
-      log('请填写 SDKAppID、userId、UserSig、strRoomId', true);
-      return;
-    }
-    if (typeof TRTC === 'undefined') {
-      log('TRTC SDK 未加载，请检查网络或 CDN', true);
-      return;
+    const $ = (id) => document.getElementById(id);
+    const logEl = $('log');
+    function log(msg, isErr) {
+      const line = '[' + new Date().toISOString().slice(11, 19) + '] ' + msg;
+      logEl.textContent += line + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+      if (isErr) console.error(msg);
+      else console.log(msg);
     }
 
-    $('btnStart').disabled = true;
-    try {
-      sizeCanvas();
-      titleBar.textContent = liveTitle;
-      document.title = liveTitle + ' · 直播中';
+    const sdkAppIdEl = $('sdkAppId');
+    const userIdEl = $('userId');
+    const userSigEl = $('userSig');
+    const strRoomIdEl = $('strRoomId');
+    const liveTitleEl = $('liveTitle');
+    const noticeEl = $('notice');
+    const orientationEl = $('orientation');
+    const previewWrap = $('previewWrap');
+    const liveBadge = $('liveBadge');
+    const titleBar = $('titleBar');
+    const localView = $('localView');
+    const canvas = $('srcCanvas');
+    const ctx = canvas.getContext('2d');
 
-      startCanvasLoop();
-      mediaStream = canvas.captureStream(15);
-      const videoTrack = mediaStream.getVideoTracks()[0];
-      if (!videoTrack) throw new Error('无法从 Canvas 取得视频轨');
+    let roomEngine = null;
+    let captureTimer = null;
+    let mediaStream = null;
+    let animPhase = 0;
+    let isLive = false;
+    let lockedOrientation = orientationEl.value;
 
-      trtc = TRTC.create();
-      trtc.on(TRTC.EVENT.ERROR, (e) => log('SDK ERROR: ' + (e && e.message ? e.message : JSON.stringify(e)), true));
+    let liveAudioResources = null;
 
-      await trtc.enterRoom({
-        sdkAppId,
-        userId,
-        userSig,
-        strRoomId,
-        scene: TRTC.TYPE.SCENE_LIVE,
-        role: TRTC.TYPE.ROLE_ANCHOR,
-      });
-      log('已进房（直播场景 / 主播角色）: ' + strRoomId);
+    function syncAudioFileRow() {
+      const show = $('audioMode').value === 'file';
+      $('audioFileRow').style.display = show ? '' : 'none';
+    }
+    $('audioMode').addEventListener('change', syncAudioFileRow);
+    syncAudioFileRow();
 
-      const profile = {
-        width: canvas.width,
-        height: canvas.height,
-        frameRate: 15,
-        bitrate: bitrateForSize(canvas.width, canvas.height),
-      };
+    function getInternalTRTC(trtcCloud) {
+      const trtc = trtcCloud._trtc;
+      if (!trtc) throw new Error('无法访问 TRTCCloud._trtc（自定义音轨不可用）');
+      return trtc;
+    }
 
-      await trtc.startLocalVideo({
-        view: localView,
-        option: {
-          videoTrack,
-          profile,
-          fillMode: 'contain',
+    async function createSynthAudio() {
+      const audioCtx = new AudioContext({ sampleRate: 48000 });
+      await audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = 440;
+      const gain = audioCtx.createGain();
+      gain.gain.value = 0.06;
+      const dest = audioCtx.createMediaStreamDestination();
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start();
+      const track = dest.stream.getAudioTracks()[0];
+      if (!track) throw new Error('合成音轨创建失败');
+      return {
+        track,
+        cleanup: () => {
+          try {
+            osc.stop();
+          } catch (_) {}
+          return audioCtx.close();
         },
-      });
-      log('已开始推送 Canvas 视频轨（' + canvas.width + '×' + canvas.height + '）');
+      };
+    }
 
-      liveBadge.classList.add('on');
-      $('btnStop').disabled = false;
-      isLive = true;
+    async function createFileAudio(file) {
+      const url = URL.createObjectURL(file);
+      const audio = new Audio();
+      audio.loop = true;
+      audio.src = url;
+      audio.crossOrigin = 'anonymous';
+      await audio.play();
+      const cap = audio.captureStream && audio.captureStream();
+      if (!cap || !cap.getAudioTracks().length) {
+        URL.revokeObjectURL(url);
+        throw new Error('当前浏览器不支持 HTMLAudioElement.captureStream，请换 Chrome/Edge 或改用合成音/麦克风');
+      }
+      const track = cap.getAudioTracks()[0];
+      return {
+        track,
+        url,
+        cleanup: () => {
+          try {
+            audio.pause();
+          } catch (_) {}
+          URL.revokeObjectURL(url);
+        },
+      };
+    }
+
+    async function createMicAudio() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const track = stream.getAudioTracks()[0];
+      if (!track) {
+        stream.getTracks().forEach((t) => t.stop());
+        throw new Error('未拿到麦克风音轨');
+      }
+      return {
+        track,
+        stream,
+        cleanup: () => {
+          stream.getTracks().forEach((t) => t.stop());
+        },
+      };
+    }
+
+    async function startPublishedAudio(trtcCloud) {
+      const mode = $('audioMode').value;
+      if (mode === 'none') {
+        log('推流音频：已关闭（仅画面）');
+        return;
+      }
+      const trtc = getInternalTRTC(trtcCloud);
+      let cleanup = () => {};
+      let audioTrack;
+      try {
+        if (mode === 'synth') {
+          const r = await createSynthAudio();
+          audioTrack = r.track;
+          cleanup = r.cleanup;
+        } else if (mode === 'file') {
+          const file = $('audioFile').files && $('audioFile').files[0];
+          if (!file) {
+            log('推流音频：未选择文件，已跳过', true);
+            return;
+          }
+          const r = await createFileAudio(file);
+          audioTrack = r.track;
+          cleanup = r.cleanup;
+        } else if (mode === 'mic') {
+          const r = await createMicAudio();
+          audioTrack = r.track;
+          cleanup = r.cleanup;
+        }
+        await trtc.startLocalAudio({
+          publish: true,
+          option: { audioTrack },
+        });
+        liveAudioResources = { cleanup };
+        log('推流音频：已开启（' + mode + '）');
+      } catch (e) {
+        try {
+          cleanup();
+        } catch (_) {}
+        liveAudioResources = null;
+        log('推流音频失败（将继续仅视频）: ' + (e && e.message ? e.message : String(e)), true);
+      }
+    }
+
+    async function stopPublishedAudio(trtcCloud) {
+      try {
+        await trtcCloud.stopLocalAudio();
+      } catch (_) {}
+      if (liveAudioResources) {
+        try {
+          liveAudioResources.cleanup();
+        } catch (_) {}
+        liveAudioResources = null;
+      }
+    }
+
+    function sizeCanvas() {
+      const portrait = orientationEl.value === 'portrait';
+      if (portrait) {
+        canvas.width = 720;
+        canvas.height = 1280;
+        previewWrap.classList.add('portrait');
+      } else {
+        canvas.width = 1280;
+        canvas.height = 720;
+        previewWrap.classList.remove('portrait');
+      }
+    }
+
+    function drawPatternGradientDemo(w, h, t) {
+      const g = ctx.createLinearGradient(0, 0, w, h);
+      g.addColorStop(0, '#1e3a5f');
+      g.addColorStop(0.5, '#0d9488');
+      g.addColorStop(1, '#6d28d9');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+
+      const cx = w / 2 + Math.sin(t) * (w * 0.25);
+      const cy = h / 2 + Math.cos(t * 1.3) * (h * 0.15);
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.min(w, h) * 0.08, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = 'bold ' + Math.floor(Math.min(w, h) * 0.06) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Canvas Demo', w / 2, h * 0.12);
+
+      ctx.font = Math.floor(Math.min(w, h) * 0.028) + 'px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillText('t=' + t.toFixed(2), w / 2, h * 0.92);
+    }
+
+    /** 西门子星：黑白径向楔，慢旋可观察运动拖尾 */
+    function drawPatternSiemensStar(w, h, t) {
+      ctx.fillStyle = '#202020';
+      ctx.fillRect(0, 0, w, h);
+      const cx = w / 2;
+      const cy = h / 2;
+      const size = Math.min(w, h) * 0.85;
+      const spokes = 36;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(t * 0.35);
+      for (let i = 0; i < spokes; i++) {
+        ctx.rotate(Math.PI / spokes);
+        const gradient = ctx.createLinearGradient(0, 0, size / 2, 0);
+        gradient.addColorStop(0, i % 2 === 0 ? '#ffffff' : '#000000');
+        gradient.addColorStop(1, i % 2 === 0 ? '#000000' : '#ffffff');
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(size / 2, (-size) / 10);
+        ctx.lineTo(size / 2, size / 10);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.arc(0, 0, size / 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.font = Math.floor(Math.min(w, h) * 0.022) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Siemens Star · rotate', cx, h - Math.min(w, h) * 0.03);
+    }
+
+    /** 简化 SMPTE 风格彩条（75% 档主条 + 底部分区） */
+    function drawPatternSMPTE(w, h) {
+      const barWidth = Math.floor(w / 7);
+      const colors = ['#c0c0c0', '#c0c000', '#00c0c0', '#00c000', '#c000c0', '#0000c0', '#c00000'];
+      const topH = h * 0.67;
+      for (let i = 0; i < 7; i++) {
+        ctx.fillStyle = colors[i];
+        ctx.fillRect(i * barWidth, 0, barWidth + 1, topH);
+      }
+      const y0 = topH;
+      const bh = h - y0;
+      const q = barWidth;
+      ctx.fillStyle = '#131313';
+      ctx.fillRect(0, y0, w, bh);
+      ctx.fillStyle = '#00214c';
+      ctx.fillRect(0, y0, q * 3, bh * 0.55);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(q * 3, y0, q * 4, bh * 0.55);
+      ctx.fillStyle = '#320050';
+      ctx.fillRect(0, y0 + bh * 0.55, q * 2, bh * 0.45);
+      ctx.fillStyle = '#090909';
+      ctx.fillRect(q * 2, y0 + bh * 0.55, q * 2, bh * 0.45);
+      ctx.fillStyle = '#1d1d1d';
+      ctx.fillRect(q * 4, y0 + bh * 0.55, q * 3, bh * 0.45);
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.font = Math.floor(Math.min(w, h) * 0.022) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('SMPTE-style bars (simplified)', w / 2, y0 + bh * 0.38);
+    }
+
+    /** 网格 + 多字号文字 + 水平渐变条（锐利度 / color banding） */
+    function drawPatternGridText(w, h, t) {
+      ctx.fillStyle = '#141820';
+      ctx.fillRect(0, 0, w, h);
+      const step = Math.max(10, Math.floor(Math.min(w, h) / 48));
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= w; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= h; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+      const bandH = Math.min(h * 0.12, 96);
+      const g = ctx.createLinearGradient(0, 0, w, 0);
+      for (let i = 0; i <= 16; i++) {
+        g.addColorStop(i / 16, i % 2 === 0 ? '#2a2a40' : '#5a5a78');
+      }
+      ctx.fillStyle = g;
+      ctx.fillRect(0, h * 0.08, w, bandH);
+      const fs1 = Math.max(14, Math.floor(Math.min(w, h) * 0.038));
+      const fs2 = Math.max(11, Math.floor(Math.min(w, h) * 0.024));
+      const fs3 = Math.max(9, Math.floor(Math.min(w, h) * 0.018));
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold ' + fs1 + 'px ui-sans-serif, Arial';
+      ctx.fillText('清晰度测试 Sharpness · ABCDEFG0123456789', step * 1.5, h * 0.28);
+      ctx.font = fs2 + 'px ui-monospace, monospace';
+      ctx.fillText('THE QUICK BROWN FOX 0123456789 · 细笔画笔画', step * 1.5, h * 0.28 + fs1 * 1.45);
+      ctx.font = fs3 + 'px ui-monospace, monospace';
+      ctx.fillText(
+        'abcdefghijklmnopqrstuvwxyz · 栅格 ' + step + 'px · t=' + t.toFixed(2),
+        step * 1.5,
+        h * 0.28 + fs1 * 1.45 + fs2 * 1.35,
+      );
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.font = Math.floor(fs2 * 0.9) + 'px sans-serif';
+      ctx.fillText('接收端若模糊：边缘糊、文字粘连、彩条偏色即码率/缩放导致', w / 2, h * 0.88);
+    }
+
+    /** 同心圆 Zone Plate：径向频率递增，外圈对应更高细节 */
+    function drawPatternZonePlate(w, h, t) {
+      ctx.fillStyle = '#080808';
+      ctx.fillRect(0, 0, w, h);
+      const cx = w / 2;
+      const cy = h / 2;
+      /** 块越大 CPU 越轻；过小可能卡顿 */
+      const px = Math.max(3, Math.round(Math.min(w, h) / 128));
+      for (let y = 0; y < h; y += px) {
+        for (let x = 0; x < w; x += px) {
+          const nx = (x - cx) / Math.min(w, h);
+          const ny = (y - cy) / Math.min(w, h);
+          const r2 = nx * nx + ny * ny;
+          const v = 0.5 + 0.5 * Math.cos(140 * r2 + t * 2);
+          const u = (v * 255) | 0;
+          ctx.fillStyle = 'rgb(' + u + ',' + u + ',' + u + ')';
+          ctx.fillRect(x, y, px, px);
+        }
+      }
+      ctx.fillStyle = 'rgba(255,180,80,0.9)';
+      ctx.font = Math.floor(Math.min(w, h) * 0.024) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Zone Plate · outer rings = finer detail', cx, h * 0.06);
+    }
+
+    function drawFrame() {
+      const w = canvas.width;
+      const h = canvas.height;
+      animPhase += 0.04;
+      const pattern = $('canvasPattern').value;
+      switch (pattern) {
+        case 'siemens_star':
+          drawPatternSiemensStar(w, h, animPhase);
+          break;
+        case 'smpte_bars':
+          drawPatternSMPTE(w, h);
+          break;
+        case 'grid_text':
+          drawPatternGridText(w, h, animPhase);
+          break;
+        case 'zone_plate':
+          drawPatternZonePlate(w, h, animPhase);
+          break;
+        case 'gradient_demo':
+        default:
+          drawPatternGradientDemo(w, h, animPhase);
+      }
+    }
+
+    function startCanvasLoop() {
+      function tick() {
+        drawFrame();
+        captureTimer = requestAnimationFrame(tick);
+      }
+      tick();
+    }
+
+    function stopCanvasLoop() {
+      if (captureTimer != null) {
+        cancelAnimationFrame(captureTimer);
+        captureTimer = null;
+      }
+    }
+
+    $('btnStart').addEventListener('click', async () => {
+      const sdkAppId = Number(sdkAppIdEl.value);
+      const userId = userIdEl.value.trim();
+      const userSig = userSigEl.value.trim();
+      const strRoomId = strRoomIdEl.value.trim();
+      const liveTitle = liveTitleEl.value.trim() || '未命名直播';
+      const notice = noticeEl.value.trim();
+
+      if (!sdkAppId || !userId || !userSig || !strRoomId) {
+        log('请填写 SDKAppID、userId、UserSig、strRoomId', true);
+        return;
+      }
+
+      $('btnStart').disabled = true;
+      try {
+        sizeCanvas();
+        titleBar.textContent = liveTitle;
+        document.title = liveTitle + ' · 直播中';
+
+        startCanvasLoop();
+        mediaStream = canvas.captureStream(15);
+        const videoTrack = mediaStream.getVideoTracks()[0];
+        if (!videoTrack) throw new Error('无法从 Canvas 取得视频轨');
+
+        await TUIRoomEngine.callExperimentalAPI(
+          JSON.stringify({
+            api: 'setFramework',
+            params: { component: 'LiveCoreView', language: 'vue3' },
+          }),
+        );
+        await TUIRoomEngine.callExperimentalAPI(
+          JSON.stringify({
+            api: 'enableUnlimitedRoom',
+            params: { enable: true },
+          }),
+        );
+
+        await TUIRoomEngine.login({ sdkAppId, userId, userSig });
+        log('TUIRoomEngine 登录成功');
+
+        roomEngine = TUIRoomEngine.getInstance();
+
+        const portrait = orientationEl.value === 'portrait';
+        const seatEnabled = $('advSeat').checked;
+        const livePayload = {
+          roomId: strRoomId,
+          name: liveTitle,
+          roomType: TUIRoomType.kLive,
+          isSeatEnabled: seatEnabled,
+          isGiftEnabled: $('advGift').checked,
+          isLikeEnabled: $('advLike').checked,
+          isPublicVisible: $('advPublic').checked,
+          isMessageDisableForAllUser: $('advMsgDisable').checked,
+        };
+        if (notice) livePayload.notice = notice;
+        const coverUrl = $('coverUrl').value.trim();
+        if (coverUrl) livePayload.coverUrl = coverUrl;
+        const backgroundUrl = $('backgroundUrl').value.trim();
+        if (backgroundUrl) livePayload.backgroundUrl = backgroundUrl;
+        const catRaw = $('categoryList').value.trim();
+        if (catRaw) {
+          livePayload.categoryList = catRaw.split(/[,，]/).map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
+        }
+        const actRaw = $('activityStatus').value.trim();
+        if (actRaw !== '') {
+          const n = parseInt(actRaw, 10);
+          if (!Number.isNaN(n)) livePayload.activityStatus = n;
+        }
+        if (seatEnabled) {
+          livePayload.keepOwnerOnSeat = $('advKeepOwner').checked;
+          /** 与 tuikit SeatLayoutTemplate：横屏 200，竖屏 600（麦位布局） */
+          livePayload.seatLayoutTemplateId = portrait ? 600 : 200;
+          livePayload.seatMode = TUISeatMode.kFreeToTake;
+          const mc = parseInt($('maxSeatCount').value, 10);
+          if (!Number.isNaN(mc) && mc > 0) livePayload.maxSeatCount = mc;
+        } else {
+          livePayload.keepOwnerOnSeat = false;
+        }
+
+        const liveListManager = roomEngine.getLiveListManager();
+        await liveListManager.startLive(livePayload);
+        log(
+          'startLive 成功（麦位=' +
+            seatEnabled +
+            '，礼物=' +
+            livePayload.isGiftEnabled +
+            '）· 管理后台可检索 roomId',
+        );
+
+        await roomEngine.setVideoResolutionMode({
+          streamType: TUIVideoStreamType.kCameraStream,
+          resolutionMode: portrait
+            ? TUIResolutionMode.kResolutionMode_Portrait
+            : TUIResolutionMode.kResolutionMode_Landscape,
+        });
+
+        try {
+          await roomEngine.closeLocalCamera();
+        } catch (_) {}
+
+        const trtcCloud = roomEngine.getTRTCCloud();
+        await trtcCloud.updateLocalView(localView);
+        await trtcCloud._startPublishVideoTrack({ videoTrack });
+        log('已开始推送 Canvas 视频轨（' + canvas.width + '×' + canvas.height + '）');
+
+        await startPublishedAudio(trtcCloud);
+
+        liveBadge.classList.add('on');
+        $('btnStop').disabled = false;
+        isLive = true;
+        lockedOrientation = orientationEl.value;
+      } catch (e) {
+        log('开播失败: ' + (e && e.message ? e.message : String(e)), true);
+        stopCanvasLoop();
+        if (mediaStream) {
+          mediaStream.getTracks().forEach((t) => t.stop());
+          mediaStream = null;
+        }
+        try {
+          if (roomEngine) await stopPublishedAudio(roomEngine.getTRTCCloud());
+        } catch (_) {}
+        try {
+          const lm = roomEngine && roomEngine.getLiveListManager();
+          if (lm) await lm.stopLive();
+        } catch (_) {}
+        try {
+          await TUIRoomEngine.logout();
+        } catch (_) {}
+        roomEngine = null;
+        liveBadge.classList.remove('on');
+        $('btnStart').disabled = false;
+      }
+    });
+
+    $('btnStop').addEventListener('click', async () => {
+      $('btnStop').disabled = true;
+      try {
+        stopCanvasLoop();
+        if (roomEngine) {
+          const trtcCloud = roomEngine.getTRTCCloud();
+          try {
+            await stopPublishedAudio(trtcCloud);
+          } catch (_) {}
+          try {
+            await trtcCloud._stopPublishVideoTrack();
+          } catch (_) {}
+          try {
+            await trtcCloud.stopLocalPreview();
+          } catch (_) {}
+          try {
+            await roomEngine.getLiveListManager().stopLive();
+            log('stopLive 成功');
+          } catch (e) {
+            log('stopLive: ' + (e && e.message ? e.message : String(e)), true);
+          }
+        }
+        if (mediaStream) {
+          mediaStream.getTracks().forEach((t) => t.stop());
+          mediaStream = null;
+        }
+        localView.srcObject = null;
+        try {
+          await TUIRoomEngine.logout();
+        } catch (_) {}
+        roomEngine = null;
+        liveBadge.classList.remove('on');
+        document.title = '极简 Canvas 开播（TUILiveKit 直播间）';
+        isLive = false;
+      } finally {
+        $('btnStart').disabled = false;
+      }
+    });
+
+    orientationEl.addEventListener('change', () => {
+      if (isLive) {
+        log('直播中无法切换横竖屏，请先结束直播。', true);
+        orientationEl.value = lockedOrientation;
+        return;
+      }
       lockedOrientation = orientationEl.value;
-    } catch (e) {
-      log('开播失败: ' + (e && e.message ? e.message : String(e)), true);
-      stopCanvasLoop();
-      if (mediaStream) {
-        mediaStream.getTracks().forEach((t) => t.stop());
-        mediaStream = null;
-      }
-      if (trtc) {
-        try { trtc.exitRoom(); } catch (_) {}
-        try { trtc.destroy(); } catch (_) {}
-        trtc = null;
-      }
-      liveBadge.classList.remove('on');
-      $('btnStart').disabled = false;
-    }
-  });
+      sizeCanvas();
+      drawFrame();
+    });
 
-  $('btnStop').addEventListener('click', async () => {
-    $('btnStop').disabled = true;
-    try {
-      stopCanvasLoop();
-      if (trtc) {
-        try { await trtc.stopLocalVideo(); } catch (_) {}
-        try { await trtc.exitRoom(); } catch (_) {}
-        try { trtc.destroy(); } catch (_) {}
-        trtc = null;
-      }
-      if (mediaStream) {
-        mediaStream.getTracks().forEach((t) => t.stop());
-        mediaStream = null;
-      }
-      localView.srcObject = null;
-      liveBadge.classList.remove('on');
-      document.title = '极简 Canvas 直播（TRTC）';
-      log('已结束直播并退房');
-      isLive = false;
-    } finally {
-      $('btnStart').disabled = false;
-    }
-  });
+    window.addEventListener('beforeunload', () => {
+      if (roomEngine) TUIRoomEngine.logout().catch(() => {});
+    });
 
-  orientationEl.addEventListener('change', () => {
-    if (isLive) {
-      log('直播中无法切换横竖屏，请先结束直播后再改分辨率。', true);
-      orientationEl.value = lockedOrientation;
-      return;
+    function syncSeatFields() {
+      const on = $('advSeat').checked;
+      $('maxSeatRow').classList.toggle('is-on', on);
+      $('keepOwnerRow').classList.toggle('is-on', on);
     }
-    lockedOrientation = orientationEl.value;
+    $('advSeat').addEventListener('change', syncSeatFields);
+    syncSeatFields();
+
     sizeCanvas();
     drawFrame();
-  });
-
-  window.addEventListener('beforeunload', () => {
-    if (trtc) {
-      trtc.exitRoom().catch(() => {});
-      trtc.destroy();
-    }
-  });
-
-  sizeCanvas();
-  drawFrame();
-  log('就绪。填写参数后点击「开播」。');
-})();
+    log('就绪。单机位演示建议展开「扩展参数」并保持麦位关闭。');
   </script>
 </body>
 </html>
