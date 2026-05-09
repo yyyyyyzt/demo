@@ -231,11 +231,11 @@
       </div>
 
       <details class="adv-panel">
-        <summary>startLive 扩展参数（与观众端「直播间」能力对齐；单机位 Canvas 建议关闭麦位）</summary>
+        <summary>startLive 扩展参数（麦位默认开启以避免 SDK 同步麦位报错 100211）</summary>
         <div class="grid-form" style="margin-top: 10px;">
           <label class="chk">
             <input type="checkbox" id="advSeat" />
-            <span>开启麦位 isSeatEnabled（对应 seatLayoutTemplateId / 连麦布局）</span>
+            <span>多人连麦（提高 maxSeatCount；不勾选则为单机位 maxSeatCount=1）</span>
           </label>
           <label class="chk">
             <input type="checkbox" id="advGift" />
@@ -249,17 +249,17 @@
             <input type="checkbox" id="advPublic" checked />
             <span>公开可见 isPublicVisible（列表可发现）</span>
           </label>
-          <label class="chk seat-only" id="keepOwnerRow">
-            <input type="checkbox" id="advKeepOwner" />
-            <span>房主上麦 keepOwnerOnSeat</span>
+          <label class="chk" id="keepOwnerRow">
+            <input type="checkbox" id="advKeepOwner" checked />
+            <span>房主上麦 keepOwnerOnSeat（单机位主播建议保持勾选）</span>
           </label>
           <label class="chk">
             <input type="checkbox" id="advMsgDisable" />
             <span>全员禁言 isMessageDisableForAllUser</span>
           </label>
           <label class="seat-only" id="maxSeatRow">
-            <span>最大麦位数 maxSeatCount（开启麦位时）</span>
-            <input id="maxSeatCount" type="number" min="1" max="16" value="8" />
+            <span>最大麦位数 maxSeatCount（仅「多人连麦」时生效）</span>
+            <input id="maxSeatCount" type="number" min="2" max="16" value="8" />
           </label>
           <label>
             <span>封面 coverUrl（可选）</span>
@@ -294,7 +294,11 @@
           <strong>WebRTC reading 'type'</strong>：多为网络抖动、UserSig 过期、或移动端浏览器策略；请确认 HTTPS、票据未过期、主播仍在推流。
         </p>
         <p>
-          模板 <code>200 / 600</code> 在官方映射里会<strong>打开麦位布局</strong>。若只做单机位 Canvas、不需要连麦，请<strong>不要勾选「开启麦位」</strong>，且不必传 <code>seatLayoutTemplateId</code>，可减少观众端麦位/PK 相关模块的空数据访问。
+          <strong>seat / 100211「seat is not enabled」</strong>：直播间若 <code>isSeatEnabled: false</code>，部分 TUIRoomEngine 仍会同步麦位列表导致报错。
+          本页已<strong>固定开启麦位</strong>，单机位使用 <code>maxSeatCount: 1</code>；仅需多人连麦时再勾选「多人连麦」并调大上限。
+        </p>
+        <p>
+          模板 <code>200 / 600</code> 用于横/竖屏麦位布局示意。
         </p>
       </details>
 
@@ -757,12 +761,20 @@
         roomEngine = TUIRoomEngine.getInstance();
 
         const portrait = orientationEl.value === 'portrait';
-        const seatEnabled = $('advSeat').checked;
+        /** RoomEngine 会同步麦位信息：必须 isSeatEnabled=true，否则会报 100211 */
+        const multiSeat = $('advSeat').checked;
+        const mcParsed = parseInt($('maxSeatCount').value, 10);
         const livePayload = {
           roomId: strRoomId,
           name: liveTitle,
           roomType: TUIRoomType.kLive,
-          isSeatEnabled: seatEnabled,
+          isSeatEnabled: true,
+          keepOwnerOnSeat: $('advKeepOwner').checked,
+          seatMode: TUISeatMode.kFreeToTake,
+          seatLayoutTemplateId: portrait ? 600 : 200,
+          maxSeatCount: multiSeat
+            ? (!Number.isNaN(mcParsed) && mcParsed >= 2 ? Math.min(16, mcParsed) : 8)
+            : 1,
           isGiftEnabled: $('advGift').checked,
           isLikeEnabled: $('advLike').checked,
           isPublicVisible: $('advPublic').checked,
@@ -782,22 +794,12 @@
           const n = parseInt(actRaw, 10);
           if (!Number.isNaN(n)) livePayload.activityStatus = n;
         }
-        if (seatEnabled) {
-          livePayload.keepOwnerOnSeat = $('advKeepOwner').checked;
-          /** 与 tuikit SeatLayoutTemplate：横屏 200，竖屏 600（麦位布局） */
-          livePayload.seatLayoutTemplateId = portrait ? 600 : 200;
-          livePayload.seatMode = TUISeatMode.kFreeToTake;
-          const mc = parseInt($('maxSeatCount').value, 10);
-          if (!Number.isNaN(mc) && mc > 0) livePayload.maxSeatCount = mc;
-        } else {
-          livePayload.keepOwnerOnSeat = false;
-        }
 
         const liveListManager = roomEngine.getLiveListManager();
         await liveListManager.startLive(livePayload);
         log(
-          'startLive 成功（麦位=' +
-            seatEnabled +
+          'startLive 成功（麦位已开启·maxSeatCount=' +
+            livePayload.maxSeatCount +
             '，礼物=' +
             livePayload.isGiftEnabled +
             '）· 管理后台可检索 roomId',
@@ -903,16 +905,15 @@
     });
 
     function syncSeatFields() {
-      const on = $('advSeat').checked;
-      $('maxSeatRow').classList.toggle('is-on', on);
-      $('keepOwnerRow').classList.toggle('is-on', on);
+      const multi = $('advSeat').checked;
+      $('maxSeatRow').classList.toggle('is-on', multi);
     }
     $('advSeat').addEventListener('change', syncSeatFields);
     syncSeatFields();
 
     sizeCanvas();
     drawFrame();
-    log('就绪。单机位演示建议展开「扩展参数」并保持麦位关闭。');
+    log('就绪。麦位默认开启（maxSeatCount=1）；多人连麦请勾选并设置上限。');
   </script>
 </body>
 </html>
