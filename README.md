@@ -32,16 +32,24 @@
 
    单独启动 API：`npm run server`。
 
-3. 路由说明：
+3. **自检数智人环境变量是否生效**（填完 `.env` 并重启 API 后）：
+
+   ```bash
+   curl -s http://127.0.0.1:3001/api/health
+   ```
+
+   关注 JSON 中的 `ivhConfigured`（应为 `true`）与 `ivhMissingEnvKeys`（应为 `[]`）。主播控制台页也会轮询该接口并展示「数智人配置」面板。
+
+4. 路由说明：
 
 - **`/`**：观众端 — `LiveView` 看播；底部 **BarrageList + BarrageInput** 走 IM 真实弹幕发送（需已进房且主播已 `startLive`）。
 - **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；数字人任务（已配置 IVH 时走云渲染，否则占位图）。
-- **`/anchor/:roomId`**：**主播控制台**（`startLive` 开启直播会话；IM 评论管理；数字人任务；**默认不再使用 Canvas**）。集成说明见 `docs/trtc-ivh-integration.md`。
+- **`/anchor/:roomId`**：**主播控制台**（`startLive` 开启直播会话；IM 评论管理；数字人任务；**默认不再使用 Canvas**）。页面会读取 `GET /api/health` 展示数智人环境变量是否就绪。集成说明见 `docs/trtc-ivh-integration.md`。
 - **`/anchor-canvas/:roomId`**：**Canvas 遗留推流**（原 `minimal-live-broadcast.html` 隐藏 iframe 方案，仅调试）。
 - **`/legacy`**：历史调试页（点赞 + 腾讯观众 JSON 面板）。
 - **`/archive/playground`**：重定向到 `/legacy`。
 
-4. Canvas 开播静态页也可直接打开仓库内 `demo/minimal-live-broadcast.html`（与 Playground 内嵌页逻辑一致；支持 URL 查询参数预填，见该文件内注释）。
+5. Canvas 开播静态页也可直接打开仓库内 `demo/minimal-live-broadcast.html`（与 Playground 内嵌页逻辑一致；支持 URL 查询参数预填，见该文件内注释）。
 
 ## 静态页面预览
 

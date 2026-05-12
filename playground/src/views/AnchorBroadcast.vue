@@ -26,6 +26,36 @@
         </p>
       </section>
 
+      <section v-if="apiHealth" class="panel panel--ivh-env">
+        <h2 class="panel__title">数智人配置（服务端）</h2>
+        <template v-if="apiHealth.ivhConfigured">
+          <p class="hint hint--ok">
+            已检测到 <code>IVH_APP_KEY</code>、<code>IVH_ACCESS_TOKEN</code>、<code>IVH_VIRTUALMAN_PROJECT_ID</code>，数字人任务将调用腾讯云网关（仍依赖
+            TRTC 与数智人项目侧配置正确）。
+          </p>
+        </template>
+        <template v-else>
+          <p class="hint">
+            下方状态为<strong>预期行为</strong>，不是接口报错：未填全数智人密钥时，任务会走<strong>本地占位图</strong>，便于先跑通评论 → 任务链路。
+          </p>
+          <p class="hint">
+            {{ apiHealth.ivhEnvFileHint }}，并补全缺少项（当前缺失：<strong>{{ (apiHealth.ivhMissingEnvKeys || []).join(', ') || '无' }}</strong>）。
+          </p>
+          <ul class="link-list">
+            <li>
+              <a :href="apiHealth.ivhConsoleKeys" class="inline-link" target="_blank" rel="noopener noreferrer"
+                >控制台获取 AppKey / AccessToken</a
+              >
+            </li>
+            <li>
+              <a :href="apiHealth.ivhDocsSigning" class="inline-link" target="_blank" rel="noopener noreferrer"
+                >aPaaS 签名与公共参数说明</a
+              >
+            </li>
+          </ul>
+        </template>
+      </section>
+
       <section class="panel">
         <h2 class="panel__title">直播会话（startLive）</h2>
         <p class="hint">
@@ -97,9 +127,7 @@
       <section class="panel">
         <h2 class="panel__title">数字人任务结果</h2>
         <p class="hint">
-          服务端异步执行：已配置 <code>IVH_*</code> 时走腾讯云数智人「外部 TRTC AppId + 字符串房间号」创建会话、开启会话、HTTP
-          <code>SEND_TEXT</code> 驱动后关闭会话；未配置时仍为占位图。轮询 <code>/api/health</code> 可见
-          <code>ivhConfigured</code>。
+          已配置数智人时：服务端异步调用 <code>gw.tvs.qq.com</code>（创建会话 → 就绪 → 开启 → <code>SEND_TEXT</code> → 关闭）。未配置时仍为<strong>占位图演示</strong>，见上方「数智人配置」面板。
         </p>
         <template v-if="dhJob">
           <p class="job">
@@ -121,6 +149,12 @@
           </template>
           <img v-if="dhJob.imageUrl" class="dhimg" :src="dhJob.imageUrl" alt="占位图" />
           <p v-if="dhJob.commentSource" class="muted small">评论来源：<code>{{ dhJob.commentSource }}</code></p>
+          <p
+            v-if="dhJob.status === 'image_done' && dhJob.imageUrl && apiHealth && !apiHealth.ivhConfigured"
+            class="hint hint--soft"
+          >
+            本条为<strong>未配置 IVH</strong>时的占位结果（随机图 + 上文说明），配置完整并重启 API 后将走真实数智人链路。
+          </p>
           <p v-if="dhJob.status === 'image_done' && !dhJob.imageUrl && !dhJob.ivhPlayStreamAddr" class="muted">
             TRTC 协议下可能无独立 PlayStreamAddr，请以观众端房间内画面为准。
           </p>
@@ -161,7 +195,19 @@ const dhErr = ref('')
 
 const dhJob = ref(null)
 const dhBusyId = ref('')
+const apiHealth = ref(null)
 let pollTimer = null
+let healthTimer = null
+
+async function refreshApiHealth() {
+  try {
+    const r = await fetch('/api/health')
+    const j = await r.json()
+    if (r.ok) apiHealth.value = j
+  } catch {
+    /* noop */
+  }
+}
 
 function msgKey(m) {
   return `${m.sequence}-${m.timestampInSecond}-${m.sender?.userId || ''}`
@@ -309,6 +355,7 @@ async function startDhJob(m) {
     const job = await res.json()
     if (!res.ok) throw new Error(job.error || res.statusText)
     dhJob.value = job
+    refreshApiHealth()
   } catch (e) {
     dhErr.value = e?.message || String(e)
   } finally {
@@ -348,15 +395,19 @@ watch(roomId, async () => {
   }
   dhJob.value = null
   await load()
+  await refreshApiHealth()
 })
 
 onMounted(() => {
   load()
+  refreshApiHealth()
   pollTimer = setInterval(pollDh, 2000)
+  healthTimer = setInterval(refreshApiHealth, 12000)
 })
 
 onUnmounted(async () => {
   if (pollTimer) clearInterval(pollTimer)
+  if (healthTimer) clearInterval(healthTimer)
   if (anchorLiveActive.value) {
     try {
       await endLive()
@@ -440,6 +491,31 @@ onUnmounted(async () => {
 
 .panel--roadmap {
   border-color: rgba(126, 184, 255, 0.28);
+}
+
+.panel--ivh-env {
+  border-color: rgba(255, 200, 120, 0.25);
+  background: rgba(40, 28, 0, 0.22);
+}
+
+.hint--ok {
+  color: rgba(160, 255, 190, 0.92);
+}
+
+.hint--soft {
+  color: rgba(255, 220, 160, 0.88);
+}
+
+.link-list {
+  margin: 0 0 0 1.1rem;
+  padding: 0;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.link-list a {
+  word-break: break-all;
 }
 
 .panel__title {

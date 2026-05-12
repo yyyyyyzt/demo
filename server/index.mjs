@@ -10,7 +10,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
-import { isIvhConfigured } from './ivhApaas.mjs'
+import { getIvhEnvDiagnostics } from './ivhApaas.mjs'
 import { runDigitalHumanPipeline } from './ivhPipeline.mjs'
 
 const require = createRequire(import.meta.url)
@@ -76,10 +76,15 @@ app.use(
 app.use(express.json())
 
 app.get('/api/health', (_req, res) => {
+  const ivh = getIvhEnvDiagnostics()
   res.json({
     ok: true,
     hasTrtcSecret: Boolean(TRTC_SDK_APP_ID && TRTC_SECRET_KEY),
-    ivhConfigured: isIvhConfigured(),
+    ivhConfigured: ivh.configured,
+    ivhMissingEnvKeys: ivh.missingEnvKeys,
+    ivhEnvFileHint: '在仓库根目录复制 .env.example 为 .env，填写 IVH_* 后重启 API 进程',
+    ivhDocsSigning: 'https://cloud.tencent.com/document/product/1240/107197',
+    ivhConsoleKeys: 'https://xiaowei.cloud.tencent.com/ivh#/asserts_management',
     dhJobRequireTicket: DH_JOB_REQUIRE_TICKET,
   })
 })

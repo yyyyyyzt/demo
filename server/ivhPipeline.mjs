@@ -22,7 +22,7 @@ function sanitizeComment(text) {
 
 async function runPlaceholderPipeline(job) {
   job.status = 'llm_done'
-  job.replyText = `（占位：未配置 IVH 环境变量）${String(job.commentText).slice(0, 120)}`
+  job.replyText = `【演示占位】服务端未检测到 IVH_*，未调用腾讯云数智人网关。将用于驱动的原文：${String(job.commentText).slice(0, 160)}`
   job.updatedAt = new Date().toISOString()
   await sleep(500)
   job.status = 'image_done'

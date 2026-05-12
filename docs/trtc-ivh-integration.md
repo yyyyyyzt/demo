@@ -56,6 +56,7 @@
 - `IVH_APP_KEY`、`IVH_ACCESS_TOKEN`、`IVH_VIRTUALMAN_PROJECT_ID`（资源中心获取）；可选 `IVH_TRTC_USER_ID`、`IVH_TRTC_PRIVATE_MAP_KEY`、`IVH_BASE_URL`。
 - 与 TRTC 现有变量并存：`TRTC_SDK_APP_ID`、`TRTC_SECRET_KEY`、`VITE_TRTC_SDK_APP_ID`。
 - 可选：`DH_JOB_REQUIRE_TICKET=1`（强制数字人任务必须带 `presubmit_ticket`）。
+- 联调时可用 `GET /api/health` 查看 `ivhConfigured`、`ivhMissingEnvKeys`（不返回任何密钥值）。
 
 ---
 

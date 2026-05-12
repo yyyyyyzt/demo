@@ -62,6 +62,16 @@ export function isIvhConfigured() {
   )
 }
 
+/** 供 /api/health 与前端展示：不返回任何密钥，仅列出缺失的环境变量名 */
+export function getIvhEnvDiagnostics() {
+  const required = ['IVH_APP_KEY', 'IVH_ACCESS_TOKEN', 'IVH_VIRTUALMAN_PROJECT_ID']
+  const missingEnvKeys = required.filter((k) => !String(process.env[k] || '').trim())
+  return {
+    configured: missingEnvKeys.length === 0,
+    missingEnvKeys,
+  }
+}
+
 export async function ivhCreateTrtcSession({
   virtualmanProjectId,
   ivhUserId,
