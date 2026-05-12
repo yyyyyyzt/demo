@@ -29,7 +29,8 @@
           </div>
           <div class="room__actions">
             <RouterLink class="btn btn--sm" :to="{ path: '/', query: { liveId: r.liveId } }">观众 H5</RouterLink>
-            <RouterLink class="btn btn--sm" :to="`/anchor/${r.id}`">主播开播</RouterLink>
+            <RouterLink class="btn btn--sm" :to="`/anchor/${r.id}`">主播控制台</RouterLink>
+            <RouterLink class="btn btn--sm btn--ghost" :to="`/anchor-canvas/${r.id}`">Canvas 遗留</RouterLink>
           </div>
         </li>
       </ul>
@@ -177,6 +178,11 @@ onMounted(loadRooms)
 .btn--sm {
   padding: 6px 10px;
   font-size: 0.78rem;
+}
+
+.btn--ghost {
+  border-style: dashed;
+  opacity: 0.9;
 }
 
 .err {

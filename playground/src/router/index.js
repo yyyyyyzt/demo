@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AdminRooms from '../views/AdminRooms.vue'
 import AnchorBroadcast from '../views/AnchorBroadcast.vue'
+import AnchorCanvasLegacy from '../views/AnchorCanvasLegacy.vue'
 import AudienceLive from '../views/AudienceLive.vue'
 import LegacyPlayground from '../views/LegacyPlayground.vue'
 
@@ -21,7 +22,13 @@ export const routes = [
     path: '/anchor/:roomId',
     name: 'anchor-broadcast',
     component: AnchorBroadcast,
-    meta: { title: '主播开播' },
+    meta: { title: '主播控制台' },
+  },
+  {
+    path: '/anchor-canvas/:roomId',
+    name: 'anchor-canvas-legacy',
+    component: AnchorCanvasLegacy,
+    meta: { title: 'Canvas 遗留推流' },
   },
   {
     path: '/legacy',
