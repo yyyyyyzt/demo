@@ -346,6 +346,25 @@
     const liveTitleEl = $('liveTitle');
     const noticeEl = $('notice');
     const orientationEl = $('orientation');
+    /** 管理台 / 主播页通过 URL 预填开播参数（userSig 很长时建议仍用手动粘贴） */
+    (function applyQueryDefaults() {
+      try {
+        const sp = new URLSearchParams(location.search);
+        const get = (k) => sp.get(k);
+        const setIf = (el, v) => {
+          if (el == null || v == null || v === '') return;
+          el.value = v;
+        };
+        setIf(sdkAppIdEl, get('sdkAppId'));
+        setIf(userIdEl, get('userId'));
+        setIf(userSigEl, get('userSig'));
+        setIf(strRoomIdEl, get('strRoomId') || get('liveId'));
+        setIf(liveTitleEl, get('liveTitle'));
+        setIf(noticeEl, get('notice'));
+        const ori = get('orientation');
+        if (ori === 'portrait' || ori === 'landscape') orientationEl.value = ori;
+      } catch (_) {}
+    })();
     const previewWrap = $('previewWrap');
     const liveBadge = $('liveBadge');
     const titleBar = $('titleBar');

@@ -5,13 +5,40 @@
 - `demo/live-like-demo.html`：纯静态 HTML 手机端页面，右下角点击点赞后会弹出小表情包动画。
 - `components/LiveLikeButton.vue`：Vue 3 单文件组件，适合复制到真实项目中复用。
 
-## Vite Playground 路由（`npm run dev`）
+## Vite Playground 与本地 API（`npm run dev`）
 
-根目录执行 `npm run dev` 后，默认打开 Vite 子项目 `playground/`：
+1. 复制环境变量模板并填写腾讯云 **SDKAppID** 与 **密钥**（用于签发 UserSig，勿提交仓库）：
 
-- **`/`**：观众端主站占位（阶段 1 将接入 TRTC UI 看播），说明见根目录 `progress.md`。
-- **`/legacy`**：历史一体化调试页（点赞参数 + 腾讯观众进房 JSON 面板），行为与原先单页 `App.vue` 一致。
+   ```bash
+   cp .env.example .env
+   ```
+
+   - `TRTC_SDK_APP_ID`、`TRTC_SECRET_KEY`：仅服务端 `server/index.mjs` 读取（启动时通过 `dotenv` 加载根目录 `.env`）。
+   - `VITE_TRTC_SDK_APP_ID`：与 SDKAppID 相同数字，供观众页表单默认展示（可公开）。
+
+2. 根目录启动 **API + 前端**（推荐）：
+
+   ```bash
+   npm run dev
+   ```
+
+   若只需前端（无 UserSig、管理台接口会失败）：
+
+   ```bash
+   npm run dev:client
+   ```
+
+   单独启动 API：`npm run server`。
+
+3. 路由说明：
+
+- **`/`**：观众端 — 使用 `tuikit-atomicx-vue3` 的 **LiveView** 进房看播（需先配置 `.env` 并成功调用 `/api/usersig`）。
+- **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；Mock 评论与数字人占位任务。
+- **`/anchor/:roomId`**：主播端 — iframe 加载与仓库 `demo/minimal-live-broadcast.html` **同源**的 Canvas 开播页（路径 `/minimal-live-broadcast.html`，构建时复制到 `dist`）；URL 预填 SDKAppID / UserSig / liveId。
+- **`/legacy`**：历史调试页（点赞 + 腾讯观众 JSON 面板）。
 - **`/archive/playground`**：重定向到 `/legacy`。
+
+4. Canvas 开播静态页也可直接打开仓库内 `demo/minimal-live-broadcast.html`（与 Playground 内嵌页逻辑一致；支持 URL 查询参数预填，见该文件内注释）。
 
 ## 静态页面预览
 

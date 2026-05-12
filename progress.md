@@ -34,10 +34,13 @@
 
 | 模块 | 路径 | 现状 |
 |------|------|------|
-| 点赞 + 腾讯观众调试（单页） | `playground/src/App.vue` + `components/TencentLiveAudiencePanel.vue` | 观众侧仅拉房间 JSON，**不渲染视频**；与 `examples/tencentLiveAudience.js` 封装一致 |
-| Canvas 开播（静态 HTML） | `demo/minimal-live-broadcast.html` | 已具备 **Canvas → 本地预览 / 推流** 的完整交互，适合作为主播推流参考实现 |
 | 静态点赞 Demo | `demo/live-like-demo.html` | 与 Vue 组件行为对齐的纯 HTML 示例 |
-| 构建 | `vite.config.js`，root 为 `playground/` | 已接入 **Vue Router**：`/` 为观众端占位，`/legacy` 为历史调试页（见 `playground/src/router/index.js`） |
+| 点赞 + 腾讯观众调试（单页） | `playground/src/views/LegacyPlayground.vue` + `components/TencentLiveAudiencePanel.vue` | 路由 **`/legacy`**；观众侧仅拉房间 JSON，**不渲染视频** |
+| Canvas 开播（静态 HTML） | `demo/minimal-live-broadcast.html`（Playground 内 **`/minimal-live-broadcast.html`** 同源挂载） | Canvas → 推流；支持 URL 查询参数预填 |
+| 观众 TRTC UI | `playground/src/views/AudienceLive.vue` | 路由 **`/`**；`LiveView` + `login` / `joinLive` |
+| 管理台 / 数字人 Mock API | `playground/src/views/AdminRooms.vue` + `server/index.mjs` | 路由 **`/admin`**；REST 见 README |
+| 主播 iframe 开播 | `playground/src/views/AnchorBroadcast.vue` | 路由 **`/anchor/:roomId`** |
+| 构建 | `vite.config.js`，root 为 `playground/` | 已接入 **Vue Router**；`/api` 开发期代理至 `127.0.0.1:3001` |
 
 **根因结论**：「观众 UI」与「Canvas 开播」目前分属两条技术路径，全链路需要 **路由 + 可选轻后端** 把它们接成「创建房间 → 主播页推流 → 观众页拉 UI 观看」。
 
@@ -213,10 +216,10 @@ server/                     # 若引入 Node 后端
 ## 八、下一步执行清单（建议顺序）
 
 1. [x] 安装并配置 `vue-router`，迁移当前 `App.vue` 至归档路由。
-2. [ ] 新建观众页，接入官方 TRTC UI（与现有 `tuikit-atomicx-vue3` 版本对齐）。
-3. [ ] 增加最小 Node（或现有栈）服务实现 `POST/GET /api/rooms` 与 `userSig`。
-4. [ ] 迁移 `minimal-live-broadcast.html` 核心逻辑到 Vue 主播页，参数从「管理台跳转」带入。
-5. [ ] 增加评论拉取与数字人任务 API（Mock → 真实 IM → 真实 LLM/生图）。
+2. [x] 新建观众页，接入官方 TRTC UI（与现有 `tuikit-atomicx-vue3` 版本对齐）。
+3. [x] 增加最小 Node（或现有栈）服务实现 `POST/GET /api/rooms` 与 `userSig`。
+4. [x] 迁移 `minimal-live-broadcast.html` 核心逻辑到 Vue 主播页，参数从「管理台跳转」带入。
+5. [x] 增加评论拉取与数字人任务 API（Mock → 真实 IM → 真实 LLM/生图）。
 
 ---
 

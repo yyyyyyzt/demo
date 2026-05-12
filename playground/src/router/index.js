@@ -1,13 +1,27 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomeAudiencePlaceholder from '../views/HomeAudiencePlaceholder.vue'
+import AdminRooms from '../views/AdminRooms.vue'
+import AnchorBroadcast from '../views/AnchorBroadcast.vue'
+import AudienceLive from '../views/AudienceLive.vue'
 import LegacyPlayground from '../views/LegacyPlayground.vue'
 
 export const routes = [
   {
     path: '/',
-    name: 'home',
-    component: HomeAudiencePlaceholder,
+    name: 'audience',
+    component: AudienceLive,
     meta: { title: '观众端' },
+  },
+  {
+    path: '/admin',
+    name: 'admin-rooms',
+    component: AdminRooms,
+    meta: { title: '管理台' },
+  },
+  {
+    path: '/anchor/:roomId',
+    name: 'anchor-broadcast',
+    component: AnchorBroadcast,
+    meta: { title: '主播开播' },
   },
   {
     path: '/legacy',

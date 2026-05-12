@@ -1,4 +1,7 @@
 node_modules
 dist
+playground/dist
 .DS_Store
 *.local
+server/data/rooms.json
+.env
