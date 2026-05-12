@@ -1,5 +1,5 @@
 /**
- * Demo REST API：直播间、UserSig、腾讯云 IM 弹幕（由前端 TUILiveKit 接入）、数字人任务占位。
+ * Demo REST API：直播间、UserSig、IM 弹幕、数字人任务（腾讯云数智人云渲染 HTTP 或占位）。
  * 生产环境请替换存储与鉴权；密钥仅通过环境变量注入。
  */
 import 'dotenv/config'
@@ -10,6 +10,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
+import { isIvhConfigured } from './ivhApaas.mjs'
+import { runDigitalHumanPipeline } from './ivhPipeline.mjs'
 
 const require = createRequire(import.meta.url)
 const { Api: TLSSigApi } = require('tls-sig-api-v2')
@@ -57,23 +59,6 @@ function genUserSig(userId, expireSec = 86400) {
   return api.genSig(userId, expireSec)
 }
 
-function advanceJob(jobId) {
-  const job = jobs.get(jobId)
-  if (!job || job.status === 'failed') return
-  if (job.status === 'pending') {
-    job.status = 'llm_done'
-    job.replyText = '（占位）感谢您的评论，我们会持续优化直播体验。'
-    job.updatedAt = new Date().toISOString()
-    setTimeout(() => advanceJob(jobId), 600)
-    return
-  }
-  if (job.status === 'llm_done') {
-    job.status = 'image_done'
-    job.imageUrl = 'https://picsum.photos/seed/dhjob/960/540'
-    job.updatedAt = new Date().toISOString()
-  }
-}
-
 const app = express()
 app.use(
   cors({
@@ -87,6 +72,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     hasTrtcSecret: Boolean(TRTC_SDK_APP_ID && TRTC_SECRET_KEY),
+    ivhConfigured: isIvhConfigured(),
   })
 })
 
@@ -221,7 +207,16 @@ app.post('/api/rooms/:id/digital-human/jobs', (req, res) => {
   }
   jobs.set(jobId, job)
   roomActiveJob.set(room.id, jobId)
-  setTimeout(() => advanceJob(jobId), 500)
+  setImmediate(() => {
+    runDigitalHumanPipeline(job, room, {
+      genUserSig,
+      trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
+    }).catch((e) => {
+      job.status = 'failed'
+      job.ivhError = job.ivhError || e?.message || String(e)
+      job.updatedAt = new Date().toISOString()
+    })
+  })
   res.status(201).json(job)
 })
 

@@ -25,13 +25,12 @@
 - **遗留调试**：Canvas 方案迁至 **`/anchor-canvas/:roomId`**，仅供与旧实验对比，不参与正式数字人链路。
 - **保留**：评论管理（`mod_*` + `joinLive` + IM 弹幕列表）与「数字人任务」占位 API（后续替换为真实数智人 HTTP 调用）。
 
-### 阶段二：服务端对接数智人云渲染（HTTP 一句话驱动）
+### 阶段二（当前提交）：服务端对接数智人云渲染（HTTP 一句话驱动）
 
-- 在 **`server/`** 内新增模块（示例职责）：
-  - 读取数智人 aPaas **签名与公共参数**（域名 `https://gw.tvs.qq.com` 等见官方文档），**密钥仅存服务端**。
-  - 封装：**创建会话 → 轮询状态至可播 → 开启会话 → HTTP 发送文本驱动指令 → 关闭会话**（与官方「接入流程」一致）。
-- 将现有 **`POST /api/rooms/:id/digital-human/jobs`** 从「占位图」改为：**审批通过后**调用上述封装（可先同步阻塞 + 超时，后续再改队列）。
-- 输出字段：至少保存「**拉流/播放 URL** 或 TRTC 入房所需结构」到任务记录，供观众端或媒体层消费。
+- **`server/ivhApaas.mjs`**：按 [aPaaS 接口调用方式](https://cloud.tencent.com/document/product/1240/107197) 生成 `appkey` + `timestamp` 的 HMAC-SHA256 签名，对 `https://gw.tvs.qq.com` 发起 `createsession` / `statsession` / `startsession` / `command`（`SEND_TEXT`）/ `closesession`。
+- **`server/ivhPipeline.mjs`**：在 `POST /api/rooms/:id/digital-human/jobs` 入队后 **异步** 执行「创建会话 → 轮询至 SessionStatus=1 → 必要时开启会话 → 文本驱动 → 关闭会话」；任务对象中写入 `ivhSessionId`、`ivhPlayStreamAddr`（若有）、`ivhVirtualmanUserId` 等。
+- **未配置 `IVH_*`** 时仍走占位图逻辑，便于本地无密钥调试。
+- **TRTC 对接形态**：创建会话采用 **外部 TRTC AppId + `TrtcStrRoomId` = 直播间 `liveId`**，并为数智人单独签发 `UserSig`（`UserId` 默认 `vh_{liveId 片段}_{job 后缀}`，可通过 `IVH_TRTC_USER_ID` 覆盖前缀），与主播 `anchor_*`、管理员 `mod_*` 区分。
 
 ### 阶段三：观众端仅消费「房间内唯一主流」
 
@@ -49,7 +48,7 @@
 
 建议在根 `.env.example` 中预留（**勿提交真实密钥**）：
 
-- `IVH_AP_*` / 或官方要求的项目、资产、签名参数（以控制台导出为准）。
+- `IVH_APP_KEY`、`IVH_ACCESS_TOKEN`、`IVH_VIRTUALMAN_PROJECT_ID`（资源中心获取）；可选 `IVH_TRTC_USER_ID`、`IVH_TRTC_PRIVATE_MAP_KEY`、`IVH_BASE_URL`。
 - 与 TRTC 现有变量并存：`TRTC_SDK_APP_ID`、`TRTC_SECRET_KEY`、`VITE_TRTC_SDK_APP_ID`。
 
 ---

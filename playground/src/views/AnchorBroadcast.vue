@@ -63,14 +63,36 @@
       </section>
 
       <section class="panel">
-        <h2 class="panel__title">数字人输出（占位轮询）</h2>
-        <p class="hint">由上方「数字人任务」创建；阶段二将替换为真实数智人 API 输出流地址。</p>
-        <p v-if="dhJob" class="job">
-          状态：<strong>{{ dhJob.status }}</strong>
-          <span v-if="dhJob.replyText"> · 回复：{{ dhJob.replyText }}</span>
+        <h2 class="panel__title">数字人任务结果</h2>
+        <p class="hint">
+          服务端异步执行：已配置 <code>IVH_*</code> 时走腾讯云数智人「外部 TRTC AppId + 字符串房间号」创建会话、开启会话、HTTP
+          <code>SEND_TEXT</code> 驱动后关闭会话；未配置时仍为占位图。轮询 <code>/api/health</code> 可见
+          <code>ivhConfigured</code>。
         </p>
-        <img v-if="dhJob?.imageUrl" class="dhimg" :src="dhJob.imageUrl" alt="数字人占位图" />
-        <p v-else class="muted">暂无已完成任务图像</p>
+        <template v-if="dhJob">
+          <p class="job">
+            状态：<strong>{{ dhJob.status }}</strong>
+            <span v-if="dhJob.replyText"> · 驱动文本：{{ dhJob.replyText }}</span>
+          </p>
+          <p v-if="dhJob.status === 'failed'" class="err">{{ dhJob.ivhError || '任务失败' }}</p>
+          <template v-if="dhJob.ivhSessionId">
+            <p class="muted small">SessionId</p>
+            <pre class="mono">{{ dhJob.ivhSessionId }}</pre>
+          </template>
+          <template v-if="dhJob.ivhVirtualmanUserId">
+            <p class="muted small">数智人 TRTC UserId</p>
+            <pre class="mono">{{ dhJob.ivhVirtualmanUserId }}</pre>
+          </template>
+          <template v-if="dhJob.ivhPlayStreamAddr">
+            <p class="muted small">PlayStreamAddr（若有）</p>
+            <pre class="mono mono--wrap">{{ dhJob.ivhPlayStreamAddr }}</pre>
+          </template>
+          <img v-if="dhJob.imageUrl" class="dhimg" :src="dhJob.imageUrl" alt="占位图" />
+          <p v-if="dhJob.status === 'image_done' && !dhJob.imageUrl && !dhJob.ivhPlayStreamAddr" class="muted">
+            TRTC 协议下可能无独立 PlayStreamAddr，请以观众端房间内画面为准。
+          </p>
+        </template>
+        <p v-else class="muted">暂无任务；请在上方列表发起「数字人任务」。</p>
       </section>
     </template>
   </div>
@@ -388,5 +410,22 @@ onUnmounted(async () => {
   max-width: 100%;
   border-radius: 8px;
   margin-top: 8px;
+}
+
+.mono {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  overflow: auto;
+  color: rgba(200, 230, 255, 0.95);
+}
+
+.mono--wrap {
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

@@ -15,6 +15,7 @@
 
    - `TRTC_SDK_APP_ID`、`TRTC_SECRET_KEY`：仅服务端 `server/index.mjs` 读取（启动时通过 `dotenv` 加载根目录 `.env`）。
    - `VITE_TRTC_SDK_APP_ID`：与 SDKAppID 相同数字，供观众页表单默认展示（可公开）。
+   - 可选 **数智人 aPaaS**：`IVH_APP_KEY`、`IVH_ACCESS_TOKEN`、`IVH_VIRTUALMAN_PROJECT_ID` 等（见 `.env.example`）；配置后 `POST .../digital-human/jobs` 将调用腾讯云网关；`GET /api/health` 返回 `ivhConfigured`。
 
 2. 根目录启动 **API + 前端**（推荐）：
 
@@ -33,7 +34,7 @@
 3. 路由说明：
 
 - **`/`**：观众端 — `LiveView` 看播；底部 **BarrageList + BarrageInput** 走 IM 真实弹幕发送（需已进房且主播已 `startLive`）。
-- **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；Mock 评论与数字人占位任务。
+- **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；数字人任务（已配置 IVH 时走云渲染，否则占位图）。
 - **`/anchor/:roomId`**：**主播控制台**（TRTC + 数智人主路径；IM 评论管理；**默认不再使用 Canvas**）。集成说明见 `docs/trtc-ivh-integration.md`。
 - **`/anchor-canvas/:roomId`**：**Canvas 遗留推流**（原 `minimal-live-broadcast.html` 隐藏 iframe 方案，仅调试）。
 - **`/legacy`**：历史调试页（点赞 + 腾讯观众 JSON 面板）。

@@ -38,7 +38,8 @@
 | 点赞 + 腾讯观众调试（单页） | `playground/src/views/LegacyPlayground.vue` + `components/TencentLiveAudiencePanel.vue` | 路由 **`/legacy`**；观众侧仅拉房间 JSON，**不渲染视频** |
 | Canvas 开播（静态 HTML） | `demo/minimal-live-broadcast.html`（Playground 内 **`/minimal-live-broadcast.html`** 同源挂载） | Canvas → 推流；支持 URL 查询参数预填 |
 | 观众 TRTC UI | `playground/src/views/AudienceLive.vue` | 路由 **`/`**；`LiveView` + `login` / `joinLive`；底部 **BarrageList / BarrageInput**（IM 真实弹幕） |
-| 管理台 / 数字人 Mock API | `playground/src/views/AdminRooms.vue` + `server/index.mjs` | 路由 **`/admin`**；REST 见 README |
+| 管理台 / 数字人任务 API | `playground/src/views/AdminRooms.vue` + `server/index.mjs` | 路由 **`/admin`**；REST 见 README |
+| 数智人 aPaaS（可选） | `server/ivhApaas.mjs`、`server/ivhPipeline.mjs` | 配置 `IVH_*` 后对接 `gw.tvs.qq.com`；未配置则任务仍为占位图 |
 | 主播控制台 / Canvas 遗留 | `playground/src/views/AnchorBroadcast.vue`、`playground/src/views/AnchorCanvasLegacy.vue` | **`/anchor/:id`** 主路径；**`/anchor-canvas/:id`** 仅 Canvas 调试 |
 | 构建 | `vite.config.js`，root 为 `playground/` | 已接入 **Vue Router**；`/api` 开发期代理至 `127.0.0.1:3001` |
 
@@ -220,7 +221,6 @@ server/                     # 若引入 Node 后端
 3. [x] 增加最小 Node（或现有栈）服务实现 `POST/GET /api/rooms` 与 `userSig`。
 4. [x] 迁移 `minimal-live-broadcast.html` 核心逻辑到 Vue 主播页，参数从「管理台跳转」带入。
 5. [x] 增加评论拉取与数字人任务 API（Mock → 真实 IM → 真实 LLM/生图）。
-
----
+6. [x] 服务端对接数智人云渲染 HTTP（`ivhApaas` + `ivhPipeline`）；任务记录 `ivhSessionId` 等字段；详见 `docs/trtc-ivh-integration.md`。
 
 *文档版本：与仓库 `main` 分支同步迭代；修改本文件时请同步更新「当前仓库事实」一节中的路径与行为描述。*
