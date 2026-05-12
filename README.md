@@ -5,6 +5,14 @@
 - `demo/live-like-demo.html`：纯静态 HTML 手机端页面，右下角点击点赞后会弹出小表情包动画。
 - `components/LiveLikeButton.vue`：Vue 3 单文件组件，适合复制到真实项目中复用。
 
+## Vite Playground 路由（`npm run dev`）
+
+根目录执行 `npm run dev` 后，默认打开 Vite 子项目 `playground/`：
+
+- **`/`**：观众端主站占位（阶段 1 将接入 TRTC UI 看播），说明见根目录 `progress.md`。
+- **`/legacy`**：历史一体化调试页（点赞参数 + 腾讯观众进房 JSON 面板），行为与原先单页 `App.vue` 一致。
+- **`/archive/playground`**：重定向到 `/legacy`。
+
 ## 静态页面预览
 
 直接用浏览器打开：
