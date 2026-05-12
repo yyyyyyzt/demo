@@ -4,7 +4,7 @@
       <main class="gate">
         <h1 class="gate__title">观众端</h1>
         <p class="gate__hint">
-          使用腾讯云 TUILiveKit 官方 <strong>LiveView</strong> 观看直播。请先启动 API 服务（含 TRTC 密钥）后点此进房；详见
+          使用腾讯云 TUILiveKit 官方 <strong>LiveView</strong> 观看直播，弹幕走 <strong>IM 真实链路</strong>。请先启动 API 服务（含 TRTC 密钥）后点此进房；详见
           <code>README.md</code>。
         </p>
 
@@ -14,7 +14,7 @@
         </label>
         <label class="field">
           <span>SDKAppID</span>
-          <input v-model.trim="sdkAppIdInput" type="number" inputmode="numeric" placeholder="控制台应用 ID" />
+          <input v-model.trim="sdkAppIdInput" type="text" inputmode="numeric" placeholder="默认读取 VITE_TRTC_SDK_APP_ID" />
         </label>
         <label class="field">
           <span>观众 userId（用于签发 UserSig）</span>
@@ -46,8 +46,14 @@
         </header>
         <p v-if="ended" class="banner">直播已结束，可点「离开」后换房间重试。</p>
         <p v-if="sessionError" class="banner banner--err">{{ sessionError }}</p>
-        <div class="live-stage">
-          <LiveView class="live-view-root" />
+        <div class="live-body">
+          <div class="live-stage">
+            <LiveView class="live-view-root" />
+          </div>
+          <div class="barrage-dock">
+            <BarrageList class="barrage-list" height="min(32vh, 220px)" />
+            <BarrageInput class="barrage-input" min-height="52px" max-height="120px" />
+          </div>
         </div>
       </div>
     </template>
@@ -59,19 +65,31 @@ import { ref, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   LiveView,
+  BarrageList,
+  BarrageInput,
   useLoginState,
   useLiveListState,
   LiveListEvent,
+  useBarrageState,
 } from 'tuikit-atomicx-vue3'
+
+function normalizeEnvSdk() {
+  const raw = import.meta.env.VITE_TRTC_SDK_APP_ID
+  if (raw == null) return ''
+  return String(raw)
+    .replace(/^["']|["']$/g, '')
+    .trim()
+}
 
 const route = useRoute()
 const router = useRouter()
 
 const { login } = useLoginState()
 const { joinLive, leaveLive, subscribeEvent, unsubscribeEvent } = useLiveListState()
+useBarrageState()
 
 const liveIdInput = ref(String(route.query.liveId || ''))
-const sdkAppIdInput = ref(String(import.meta.env.VITE_TRTC_SDK_APP_ID || ''))
+const sdkAppIdInput = ref(normalizeEnvSdk())
 const guestNickname = ref(`viewer_${Math.random().toString(36).slice(2, 10)}`)
 
 const joined = ref(false)
@@ -111,9 +129,9 @@ async function doJoin() {
     gateError.value = '请填写直播间 ID（liveId）。'
     return
   }
-  const sdkAppId = Number(sdkAppIdInput.value)
-  if (!sdkAppId) {
-    gateError.value = '请填写 SDKAppID，或在 .env 中配置 VITE_TRTC_SDK_APP_ID。'
+  const sdkAppId = Number(sdkAppIdInput.value.trim())
+  if (!Number.isFinite(sdkAppId) || sdkAppId <= 0) {
+    gateError.value = '请填写有效 SDKAppID，或在 .env 中配置 VITE_TRTC_SDK_APP_ID。'
     return
   }
   const userId = guestNickname.value.trim() || `viewer_${Date.now()}`
@@ -329,6 +347,13 @@ onUnmounted(() => {
   background: rgba(180, 40, 40, 0.35);
 }
 
+.live-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .live-stage {
   flex: 1;
   min-height: 0;
@@ -339,10 +364,24 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
 }
+
+.barrage-dock {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(10, 12, 20, 0.96);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.barrage-list {
+  max-height: min(32vh, 220px);
+}
+
+.barrage-input {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
 </style>
 
 <style>
-/* LiveView 根容器需占满舞台（组件使用内部 class，故用深度选择器） */
 .live-view-root.live-core-view-container,
 .live-view-root .live-core-view-container {
   width: 100%;

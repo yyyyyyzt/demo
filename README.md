@@ -32,9 +32,9 @@
 
 3. 路由说明：
 
-- **`/`**：观众端 — 使用 `tuikit-atomicx-vue3` 的 **LiveView** 进房看播（需先配置 `.env` 并成功调用 `/api/usersig`）。
+- **`/`**：观众端 — `LiveView` 看播；底部 **BarrageList + BarrageInput** 走 IM 真实弹幕发送（需已进房且主播已 `startLive`）。
 - **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；Mock 评论与数字人占位任务。
-- **`/anchor/:roomId`**：主播端 — iframe 加载与仓库 `demo/minimal-live-broadcast.html` **同源**的 Canvas 开播页（路径 `/minimal-live-broadcast.html`，构建时复制到 `dist`）；URL 预填 SDKAppID / UserSig / liveId。
+- **`/anchor/:roomId`**：主播端 — **隐藏 iframe** 加载 `minimal-live-broadcast.html`（`hidePreview=1` 隐藏 Canvas 预览）；父页面按钮通过 `postMessage` 触发开播/停播；**「连接评论管理」** 使用 `mod_*` 身份 `joinLive` 后拉取弹幕列表，可发起数字人占位任务。
 - **`/legacy`**：历史调试页（点赞 + 腾讯观众 JSON 面板）。
 - **`/archive/playground`**：重定向到 `/legacy`。
 

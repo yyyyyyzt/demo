@@ -152,6 +152,10 @@
       line-height: 1.55;
     }
     details.trouble summary { cursor: pointer; margin-bottom: 6px; }
+    /* 嵌入主播页时隐藏 Canvas/本地预览区域，仅保留表单与日志（由 URL ?hidePreview=1 开启） */
+    body.hide-broadcast-preview #broadcastPreviewPanel {
+      display: none !important;
+    }
   </style>
 </head>
 <body>
@@ -306,7 +310,7 @@
       </p>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="broadcastPreviewPanel">
       <div id="previewWrap" class="preview-wrap">
         <div id="liveBadge" class="status-live">LIVE</div>
         <div id="titleBar" class="title-bar"></div>
@@ -363,8 +367,24 @@
         setIf(noticeEl, get('notice'));
         const ori = get('orientation');
         if (ori === 'portrait' || ori === 'landscape') orientationEl.value = ori;
+        if (get('hidePreview') === '1') {
+          document.body.classList.add('hide-broadcast-preview');
+        }
       } catch (_) {}
     })();
+
+    window.addEventListener('message', (event) => {
+      if (event.origin !== window.location.origin) return;
+      const t = event.data && event.data.type;
+      if (t === 'tuikit-demo-start-live') {
+        const btn = document.getElementById('btnStart');
+        if (btn && !btn.disabled) btn.click();
+      }
+      if (t === 'tuikit-demo-stop-live') {
+        const btn = document.getElementById('btnStop');
+        if (btn && !btn.disabled) btn.click();
+      }
+    });
     const previewWrap = $('previewWrap');
     const liveBadge = $('liveBadge');
     const titleBar = $('titleBar');

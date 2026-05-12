@@ -37,9 +37,9 @@
 | 静态点赞 Demo | `demo/live-like-demo.html` | 与 Vue 组件行为对齐的纯 HTML 示例 |
 | 点赞 + 腾讯观众调试（单页） | `playground/src/views/LegacyPlayground.vue` + `components/TencentLiveAudiencePanel.vue` | 路由 **`/legacy`**；观众侧仅拉房间 JSON，**不渲染视频** |
 | Canvas 开播（静态 HTML） | `demo/minimal-live-broadcast.html`（Playground 内 **`/minimal-live-broadcast.html`** 同源挂载） | Canvas → 推流；支持 URL 查询参数预填 |
-| 观众 TRTC UI | `playground/src/views/AudienceLive.vue` | 路由 **`/`**；`LiveView` + `login` / `joinLive` |
+| 观众 TRTC UI | `playground/src/views/AudienceLive.vue` | 路由 **`/`**；`LiveView` + `login` / `joinLive`；底部 **BarrageList / BarrageInput**（IM 真实弹幕） |
 | 管理台 / 数字人 Mock API | `playground/src/views/AdminRooms.vue` + `server/index.mjs` | 路由 **`/admin`**；REST 见 README |
-| 主播 iframe 开播 | `playground/src/views/AnchorBroadcast.vue` | 路由 **`/anchor/:roomId`** |
+| 主播 iframe 开播 | `playground/src/views/AnchorBroadcast.vue` | 路由 **`/anchor/:roomId`**；隐藏 iframe + `postMessage` 控制推流；`mod_*` 身份单独 `joinLive` 管理弹幕 |
 | 构建 | `vite.config.js`，root 为 `playground/` | 已接入 **Vue Router**；`/api` 开发期代理至 `127.0.0.1:3001` |
 
 **根因结论**：「观众 UI」与「Canvas 开播」目前分属两条技术路径，全链路需要 **路由 + 可选轻后端** 把它们接成「创建房间 → 主播页推流 → 观众页拉 UI 观看」。

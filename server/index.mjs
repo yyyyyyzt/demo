@@ -1,5 +1,5 @@
 /**
- * Demo REST API：直播间、UserSig、评论 Mock、数字人任务占位。
+ * Demo REST API：直播间、UserSig、腾讯云 IM 弹幕（由前端 TUILiveKit 接入）、数字人任务占位。
  * 生产环境请替换存储与鉴权；密钥仅通过环境变量注入。
  */
 import 'dotenv/config'
@@ -55,32 +55,6 @@ function genUserSig(userId, expireSec = 86400) {
   }
   const api = new TLSSigApi(Number(TRTC_SDK_APP_ID), TRTC_SECRET_KEY)
   return api.genSig(userId, expireSec)
-}
-
-function mockComments(roomId) {
-  return [
-    {
-      id: `c_${roomId}_1`,
-      text: '主播好，数字人什么时候上线？',
-      user: '观众A',
-      source: 'mock',
-      createdAt: new Date(Date.now() - 120_000).toISOString(),
-    },
-    {
-      id: `c_${roomId}_2`,
-      text: '画面很清晰👍',
-      user: '观众B',
-      source: 'mock',
-      createdAt: new Date(Date.now() - 60_000).toISOString(),
-    },
-    {
-      id: `c_${roomId}_3`,
-      text: '来首音乐',
-      user: '观众C',
-      source: 'mock',
-      createdAt: new Date(Date.now() - 15_000).toISOString(),
-    },
-  ]
 }
 
 function advanceJob(jobId) {
@@ -175,10 +149,18 @@ app.post('/api/rooms/:id/token', (req, res) => {
       res.status(404).json({ error: '房间不存在' })
       return
     }
-    const role = req.body?.role === 'anchor' ? 'anchor' : 'audience'
-    const userId =
-      String(req.body?.userId || '').trim() ||
-      (role === 'anchor' ? `anchor_${room.liveId}`.slice(0, 48) : `viewer_${uuidv4().replace(/-/g, '').slice(0, 12)}`)
+    const roleRaw = String(req.body?.role || 'audience')
+    const role =
+      roleRaw === 'anchor' ? 'anchor' : roleRaw === 'moderator' ? 'moderator' : 'audience'
+
+    const safeLiveKey = String(room.liveId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 36)
+
+    let userId = String(req.body?.userId || '').trim()
+    if (!userId) {
+      if (role === 'anchor') userId = `anchor_${safeLiveKey}`.slice(0, 48)
+      else if (role === 'moderator') userId = `mod_${safeLiveKey}`.slice(0, 48)
+      else userId = `viewer_${uuidv4().replace(/-/g, '').slice(0, 12)}`
+    }
     const expire = Math.min(Math.max(Number(req.body?.expire) || 86400, 300), 86400 * 30)
     const userSig = genUserSig(userId, expire)
     res.json({
@@ -203,8 +185,12 @@ app.get('/api/rooms/:id/comments', (req, res) => {
     res.status(404).json({ error: '房间不存在' })
     return
   }
-  const items = mockComments(room.id)
-  res.json({ items, nextCursor: null })
+  res.json({
+    items: [],
+    nextCursor: null,
+    source: 'im',
+    hint: '评论由 TUILiveKit 弹幕（腾讯云 IM）下发，请使用观众端发送、主播页「连接评论管理」查看。',
+  })
 })
 
 app.post('/api/rooms/:id/digital-human/jobs', (req, res) => {
