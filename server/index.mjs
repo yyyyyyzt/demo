@@ -1,5 +1,5 @@
 /**
- * Demo REST API：直播间、UserSig、IM 弹幕、数字人任务（IVH HTTP / 占位）、评论 presubmit 权威文本。
+ * Demo REST API：直播间、UserSig、IM 弹幕（先审后代发）、数字人任务（IVH / 占位）、评论 presubmit。
  * 生产环境请替换存储与鉴权；密钥仅通过环境变量注入。
  */
 import 'dotenv/config'
@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
 import { getIvhEnvDiagnostics } from './ivhApaas.mjs'
+import { imSendGroupTextAsUser } from './imRest.mjs'
 import { runDigitalHumanPipeline } from './ivhPipeline.mjs'
 
 const require = createRequire(import.meta.url)
@@ -24,6 +25,13 @@ const PORT = Number(process.env.API_PORT || process.env.PORT || 3001)
 
 const TRTC_SDK_APP_ID = process.env.TRTC_SDK_APP_ID
 const TRTC_SECRET_KEY = process.env.TRTC_SECRET_KEY
+const IM_REST_ADMIN_USER_ID = String(process.env.IM_REST_ADMIN_USER_ID || '').trim()
+
+function imGroupIdForRoom(room) {
+  const prefix = process.env.IM_GROUP_ID_PREFIX || ''
+  const suffix = process.env.IM_GROUP_ID_SUFFIX || ''
+  return `${prefix}${room.liveId}${suffix}`
+}
 
 /** @type {Map<string, object>} */
 const jobs = new Map()
@@ -86,6 +94,7 @@ app.get('/api/health', (_req, res) => {
     ivhDocsSigning: 'https://cloud.tencent.com/document/product/1240/107197',
     ivhConsoleKeys: 'https://xiaowei.cloud.tencent.com/ivh#/asserts_management',
     dhJobRequireTicket: DH_JOB_REQUIRE_TICKET,
+    imApprovePublishConfigured: Boolean(TRTC_SDK_APP_ID && TRTC_SECRET_KEY && IM_REST_ADMIN_USER_ID),
   })
 })
 
@@ -174,6 +183,50 @@ app.post('/api/rooms/:id/token', (req, res) => {
   } catch (e) {
     const code = e.statusCode || 500
     res.status(code).json({ error: e.message || String(e) })
+  }
+})
+
+app.post('/api/rooms/:id/barrage/approve-publish', async (req, res) => {
+  try {
+    if (!IM_REST_ADMIN_USER_ID) {
+      res.status(503).json({
+        error:
+          '未配置 IM_REST_ADMIN_USER_ID。请在 IM 控制台创建 App 管理员账号，并在 .env 中填写该 userId（与 TRTC 同 SDKAppID 下签发 UserSig）。',
+      })
+      return
+    }
+    const rooms = loadRooms()
+    const room = rooms.find((r) => r.id === req.params.id)
+    if (!room) {
+      res.status(404).json({ error: '房间不存在' })
+      return
+    }
+    const sequence = Number(req.body?.sequence)
+    const timestampInSecond = Number(req.body?.timestamp_in_second)
+    const senderUserId = String(req.body?.sender_user_id || '').trim()
+    const text = String(req.body?.text || '').trim()
+    if (!Number.isFinite(sequence) || !Number.isFinite(timestampInSecond) || !senderUserId || !text) {
+      res.status(400).json({ error: 'sequence、timestamp_in_second、sender_user_id、text 必填' })
+      return
+    }
+    const groupId = imGroupIdForRoom(room)
+    await imSendGroupTextAsUser({
+      sdkAppId: TRTC_SDK_APP_ID,
+      secretKey: TRTC_SECRET_KEY,
+      adminUserId: IM_REST_ADMIN_USER_ID,
+      groupId,
+      fromAccount: senderUserId,
+      text: text.slice(0, 2000),
+      cloudCustomData: {
+        audit: 'public',
+        srcSequence: sequence,
+        srcTimestamp: timestampInSecond,
+      },
+    })
+    res.json({ ok: true, groupId })
+  } catch (e) {
+    const code = e.statusCode || 500
+    res.status(code).json({ error: e.message || String(e), imCode: e.imCode })
   }
 })
 

@@ -84,8 +84,12 @@
       <section class="panel">
         <h2 class="panel__title">评论管理（IM 真实弹幕）</h2>
         <p class="hint">
-          与推流/数智人账号隔离：使用 <code>mod_*</code> 身份 <code>joinLive</code> 后拉取弹幕。点击「数字人任务」时，会先调用服务端
-          <code>comment-presubmit</code> 暂存本条权威文本，再创建任务（避免浏览器随意篡改 <code>comment_text</code>）。
+          与推流/数智人账号隔离：使用 <code>mod_*</code> 身份 <code>joinLive</code> 后拉取弹幕。标记为 <strong>待审</strong> 的文本为观众发送的
+          <code>audit=pending</code> 消息；点「批准显示」由服务端调 IM REST 以原用户身份代发 <code>audit=public</code> 公区消息。「数字人任务」仍走
+          <code>comment-presubmit</code>。
+        </p>
+        <p v-if="modConnected && apiHealth && !apiHealth.imApprovePublishConfigured" class="hint hint--warn">
+          未配置 <code>IM_REST_ADMIN_USER_ID</code> 时无法「批准显示」（需 IM App 管理员 userId）。请见根目录 <code>.env.example</code>。
         </p>
         <div class="mod-actions">
           <button
@@ -103,21 +107,40 @@
         <p v-if="dhErr" class="err">{{ dhErr }}</p>
 
         <template v-if="modConnected">
-          <p class="muted small">共 {{ messageList.length }} 条（含历史拉取）</p>
+          <p class="muted small">共 {{ messageList.length }} 条（含待审与历史）</p>
           <ul class="msg-list">
-            <li v-for="m in messageList" :key="msgKey(m)" class="msg-row">
+            <li v-for="m in messageList" :key="msgKey(m)" class="msg-row" :class="{ 'msg-row--pending': isPendingBarrage(m) }">
               <div class="msg-main">
                 <span class="msg-user">{{ m.sender?.userName || m.sender?.userId }}</span>
+                <span v-if="isPendingBarrage(m)" class="msg-badge">待审</span>
+                <span v-else-if="isPublicBarrage(m)" class="msg-badge msg-badge--ok">已过审</span>
                 <span class="msg-text">{{ m.textContent || '（非文本）' }}</span>
               </div>
-              <button
-                type="button"
-                class="btn btn--sm"
-                :disabled="dhBusyId === msgKey(m)"
-                @click="startDhJob(m)"
-              >
-                数字人任务
-              </button>
+              <div class="msg-actions">
+                <template v-if="isTextBarrage(m) && isPendingBarrage(m) && !approveSentKeys.includes(msgKey(m))">
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--approve"
+                    :disabled="approveBusyKey === msgKey(m) || !apiHealth?.imApprovePublishConfigured"
+                    @click="approveBarrage(m)"
+                  >
+                    {{ approveBusyKey === msgKey(m) ? '提交中…' : '批准显示' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    :disabled="dhBusyId === msgKey(m)"
+                    @click="startDhJob(m)"
+                  >
+                    数字人任务
+                  </button>
+                </template>
+                <template v-else-if="isTextBarrage(m) && !isPendingBarrage(m)">
+                  <button type="button" class="btn btn--sm" :disabled="dhBusyId === msgKey(m)" @click="startDhJob(m)">
+                    数字人任务
+                  </button>
+                </template>
+              </div>
             </li>
           </ul>
           <p v-if="!messageList.length" class="muted">暂无弹幕，请在观众端进房后发送。</p>
@@ -173,6 +196,7 @@ import {
   useLiveListState,
   useBarrageState,
 } from 'tuikit-atomicx-vue3'
+import { isPendingBarrage, isPublicBarrage, barrageDedupeKey } from '../utils/barrageAudit.js'
 
 const route = useRoute()
 const roomId = computed(() => route.params.roomId)
@@ -195,6 +219,8 @@ const dhErr = ref('')
 
 const dhJob = ref(null)
 const dhBusyId = ref('')
+const approveBusyKey = ref('')
+const approveSentKeys = ref([])
 const apiHealth = ref(null)
 let pollTimer = null
 let healthTimer = null
@@ -210,7 +236,37 @@ async function refreshApiHealth() {
 }
 
 function msgKey(m) {
-  return `${m.sequence}-${m.timestampInSecond}-${m.sender?.userId || ''}`
+  return barrageDedupeKey(m)
+}
+
+function isTextBarrage(m) {
+  return m?.messageType === 0
+}
+
+async function approveBarrage(m) {
+  if (!room.value || !isTextBarrage(m) || !isPendingBarrage(m)) return
+  const k = msgKey(m)
+  approveBusyKey.value = k
+  modErr.value = ''
+  try {
+    const r = await fetch(`/api/rooms/${room.value.id}/barrage/approve-publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sequence: m.sequence,
+        timestamp_in_second: m.timestampInSecond,
+        sender_user_id: m.sender?.userId || '',
+        text: m.textContent || '',
+      }),
+    })
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || r.statusText)
+    approveSentKeys.value = [...approveSentKeys.value, k]
+  } catch (e) {
+    modErr.value = e?.message || String(e)
+  } finally {
+    approveBusyKey.value = ''
+  }
 }
 
 async function load() {
@@ -393,6 +449,7 @@ watch(roomId, async () => {
   if (modConnected.value) {
     await disconnectMod()
   }
+  approveSentKeys.value = []
   dhJob.value = null
   await load()
   await refreshApiHealth()
@@ -590,6 +647,47 @@ onUnmounted(async () => {
   padding: 10px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-size: 0.85rem;
+}
+
+.msg-row--pending {
+  background: rgba(80, 60, 0, 0.18);
+  margin: 0 -8px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 8px;
+}
+
+.msg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.msg-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  vertical-align: middle;
+  background: rgba(255, 180, 80, 0.25);
+  color: #ffd28a;
+}
+
+.msg-badge--ok {
+  background: rgba(80, 200, 120, 0.2);
+  color: #9cf0b8;
+}
+
+.btn--approve {
+  border-color: rgba(120, 220, 160, 0.45);
+  background: rgba(40, 90, 60, 0.35);
+}
+
+.hint--warn {
+  color: rgba(255, 200, 140, 0.9);
 }
 
 .msg-main {

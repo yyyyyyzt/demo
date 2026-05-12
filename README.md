@@ -42,9 +42,9 @@
 
 4. 路由说明：
 
-- **`/`**：观众端 — `LiveView` 看播；底部 **BarrageList + BarrageInput** 走 IM 真实弹幕发送（需已进房且主播已 `startLive`）。
+- **`/`**：观众端 — `LiveView` 看播；弹幕 **先审后发**（发送带 `audit=pending`，列表仅展示公区）；底部 `BarrageInput` 拦截发送；需主持人在 `/anchor` 批准并由服务端 IM REST 代发。
 - **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；数字人任务（已配置 IVH 时走云渲染，否则占位图）。
-- **`/anchor/:roomId`**：**主播控制台**（`startLive` 开启直播会话；IM 评论管理；数字人任务；**默认不再使用 Canvas**）。页面会读取 `GET /api/health` 展示数智人环境变量是否就绪。集成说明见 `docs/trtc-ivh-integration.md`。
+- **`/anchor/:roomId`**：**主播控制台**（`startLive`；IM 评论管理含 **待审弹幕 / 批准显示 / 数字人任务**；**默认不再使用 Canvas**）。批准显示需配置 `IM_REST_ADMIN_USER_ID`（IM App 管理员）。页面会读取 `GET /api/health` 展示数智人环境变量是否就绪。集成说明见 `docs/trtc-ivh-integration.md`。
 - **`/anchor-canvas/:roomId`**：**Canvas 遗留推流**（原 `minimal-live-broadcast.html` 隐藏 iframe 方案，仅调试）。
 - **`/legacy`**：历史调试页（点赞 + 腾讯观众 JSON 面板）。
 - **`/archive/playground`**：重定向到 `/legacy`。

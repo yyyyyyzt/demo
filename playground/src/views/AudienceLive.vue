@@ -4,7 +4,7 @@
       <main class="gate">
         <h1 class="gate__title">观众端</h1>
         <p class="gate__hint">
-          使用腾讯云 TUILiveKit 官方 <strong>LiveView</strong> 观看直播，弹幕走 <strong>IM 真实链路</strong>。请先启动 API 服务（含 TRTC 密钥）后点此进房；详见
+          使用腾讯云 TUILiveKit 官方 <strong>LiveView</strong> 观看直播，弹幕走 <strong>IM 真实链路</strong>；当前为<strong>先审后发</strong>：您发送的文本需主持人在控制台放行后才会出现在公区列表。请先启动 API 服务（含 TRTC 密钥）后点此进房；详见
           <code>README.md</code>。
         </p>
 
@@ -51,8 +51,22 @@
             <LiveView class="live-view-root" />
           </div>
           <div class="barrage-dock">
-            <BarrageList class="barrage-list" height="min(32vh, 220px)" />
-            <BarrageInput class="barrage-input" min-height="52px" max-height="120px" />
+            <p class="barrage-moderation-hint">先审后发：发送后需主持人「批准显示」才会出现在下方公区。</p>
+            <div ref="barrageScrollRef" class="barrage-list audience-barrage-list">
+              <template v-if="visibleBarrages.length">
+                <div v-for="m in visibleBarrages" :key="msgRowKey(m)" class="audience-barrage-row">
+                  <span class="audience-barrage-user">{{ m.sender?.userName || m.sender?.userId }}</span>
+                  <span class="audience-barrage-text">{{ m.textContent }}</span>
+                </div>
+              </template>
+              <p v-else class="audience-barrage-empty">暂无公区弹幕</p>
+            </div>
+            <BarrageInput
+              class="barrage-input"
+              min-height="52px"
+              max-height="120px"
+              :on-will-send-barrage="onWillSendBarrage"
+            />
           </div>
         </div>
       </div>
@@ -61,17 +75,17 @@
 </template>
 
 <script setup>
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, watch, onUnmounted, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   LiveView,
-  BarrageList,
   BarrageInput,
   useLoginState,
   useLiveListState,
   LiveListEvent,
   useBarrageState,
 } from 'tuikit-atomicx-vue3'
+import { isPendingBarrage, barrageDedupeKey } from '../utils/barrageAudit.js'
 
 function normalizeEnvSdk() {
   const raw = import.meta.env.VITE_TRTC_SDK_APP_ID
@@ -86,7 +100,48 @@ const router = useRouter()
 
 const { login } = useLoginState()
 const { joinLive, leaveLive, subscribeEvent, unsubscribeEvent } = useLiveListState()
-useBarrageState()
+const { messageList, sendTextMessage } = useBarrageState()
+
+const barrageScrollRef = ref(null)
+
+const visibleBarrages = computed(() =>
+  (messageList.value || []).filter((m) => {
+    if (m.messageType !== 0) return true
+    return !isPendingBarrage(m)
+  }),
+)
+
+function msgRowKey(m) {
+  return barrageDedupeKey(m)
+}
+
+function scrollBarrageBottom() {
+  const el = barrageScrollRef.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
+watch(
+  visibleBarrages,
+  () => {
+    nextTick(() => scrollBarrageBottom())
+  },
+  { deep: true },
+)
+
+/**
+ * 拦截默认发送，改为带 audit=pending 的 extensionInfo（与主播端审核、IM REST 公区代发一致）
+ * @param {{ textContent: string }} draft
+ */
+async function onWillSendBarrage(draft) {
+  const text = String(draft?.textContent || '').trim()
+  if (!text) return false
+  await sendTextMessage({
+    text,
+    extensionInfo: { audit: 'pending' },
+  })
+  return false
+}
 
 const liveIdInput = ref(String(route.query.liveId || ''))
 const sdkAppIdInput = ref(normalizeEnvSdk())
@@ -372,8 +427,51 @@ onUnmounted(() => {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-.barrage-list {
+.barrage-moderation-hint {
+  margin: 0;
+  padding: 6px 12px 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: rgba(255, 210, 140, 0.88);
+}
+
+.audience-barrage-list {
   max-height: min(32vh, 220px);
+  overflow-y: auto;
+  padding: 6px 10px 8px;
+}
+
+.audience-barrage-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.audience-barrage-user {
+  flex: 0 0 auto;
+  max-width: 36%;
+  color: rgba(180, 220, 255, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audience-barrage-text {
+  flex: 1;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.88);
+  word-break: break-word;
+}
+
+.audience-barrage-empty {
+  margin: 0;
+  padding: 12px 8px;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .barrage-input {
