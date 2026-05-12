@@ -40,6 +40,7 @@
 | 观众 TRTC UI | `playground/src/views/AudienceLive.vue` | 路由 **`/`**；`LiveView` + `login` / `joinLive`；底部 **BarrageList / BarrageInput**（IM 真实弹幕） |
 | 管理台 / 数字人任务 API | `playground/src/views/AdminRooms.vue` + `server/index.mjs` | 路由 **`/admin`**；REST 见 README |
 | 数智人 aPaaS（可选） | `server/ivhApaas.mjs`、`server/ivhPipeline.mjs` | 配置 `IVH_*` 后对接 `gw.tvs.qq.com`；未配置则任务仍为占位图 |
+| 评论进数智人 | `POST .../digital-human/comment-presubmit` + `jobs` | 服务端暂存权威文本；可选 `DH_JOB_REQUIRE_TICKET=1` |
 | 主播控制台 / Canvas 遗留 | `playground/src/views/AnchorBroadcast.vue`、`playground/src/views/AnchorCanvasLegacy.vue` | **`/anchor/:id`** 主路径；**`/anchor-canvas/:id`** 仅 Canvas 调试 |
 | 构建 | `vite.config.js`，root 为 `playground/` | 已接入 **Vue Router**；`/api` 开发期代理至 `127.0.0.1:3001` |
 

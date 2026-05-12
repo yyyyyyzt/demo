@@ -1,5 +1,5 @@
 /**
- * Demo REST API：直播间、UserSig、IM 弹幕、数字人任务（腾讯云数智人云渲染 HTTP 或占位）。
+ * Demo REST API：直播间、UserSig、IM 弹幕、数字人任务（IVH HTTP / 占位）、评论 presubmit 权威文本。
  * 生产环境请替换存储与鉴权；密钥仅通过环境变量注入。
  */
 import 'dotenv/config'
@@ -29,6 +29,13 @@ const TRTC_SECRET_KEY = process.env.TRTC_SECRET_KEY
 const jobs = new Map()
 /** room internal id -> latest job id */
 const roomActiveJob = new Map()
+
+/** 数字人任务：评论正文服务端暂存（一次性 ticket），避免仅信任浏览器 body 中的 comment_text */
+const PRESUBMIT_TTL_MS = 15 * 60 * 1000
+/** @type {Map<string, { roomId: string, commentId: string, text: string, expires: number }>} */
+const presubmitByTicket = new Map()
+
+const DH_JOB_REQUIRE_TICKET = process.env.DH_JOB_REQUIRE_TICKET === '1'
 
 function ensureDataDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -73,6 +80,7 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     hasTrtcSecret: Boolean(TRTC_SDK_APP_ID && TRTC_SECRET_KEY),
     ivhConfigured: isIvhConfigured(),
+    dhJobRequireTicket: DH_JOB_REQUIRE_TICKET,
   })
 })
 
@@ -179,6 +187,44 @@ app.get('/api/rooms/:id/comments', (req, res) => {
   })
 })
 
+app.post('/api/rooms/:id/digital-human/comment-presubmit', (req, res) => {
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const sequence = Number(req.body?.sequence)
+  const timestampInSecond = Number(req.body?.timestamp_in_second)
+  const senderUserId = String(req.body?.sender_user_id || '').trim()
+  const text = String(req.body?.text || '').trim()
+  if (!Number.isFinite(sequence) || !Number.isFinite(timestampInSecond) || !senderUserId || !text) {
+    res
+      .status(400)
+      .json({ error: 'sequence、timestamp_in_second、sender_user_id、text 必填且为合法数值/非空字符串' })
+    return
+  }
+  const now = Date.now()
+  if (presubmitByTicket.size > 400) {
+    for (const [k, v] of presubmitByTicket) {
+      if (v.expires < now) presubmitByTicket.delete(k)
+    }
+  }
+  const commentId = `im_${sequence}_${senderUserId}_${timestampInSecond}`
+  const ticket = `pre_${uuidv4().replace(/-/g, '')}`
+  presubmitByTicket.set(ticket, {
+    roomId: room.id,
+    commentId,
+    text: text.slice(0, 2000),
+    expires: Date.now() + PRESUBMIT_TTL_MS,
+  })
+  res.status(201).json({
+    ticket,
+    comment_id: commentId,
+    expires_in_ms: PRESUBMIT_TTL_MS,
+  })
+})
+
 app.post('/api/rooms/:id/digital-human/jobs', (req, res) => {
   const rooms = loadRooms()
   const room = rooms.find((r) => r.id === req.params.id)
@@ -186,12 +232,40 @@ app.post('/api/rooms/:id/digital-human/jobs', (req, res) => {
     res.status(404).json({ error: '房间不存在' })
     return
   }
-  const commentId = String(req.body?.comment_id || '').trim()
-  const commentText = String(req.body?.comment_text || '').trim()
-  if (!commentId || !commentText) {
-    res.status(400).json({ error: 'comment_id 与 comment_text 必填' })
+  const presubmitTicket = String(req.body?.presubmit_ticket || '').trim()
+  let commentId = ''
+  let commentText = ''
+  let commentSource = 'client_body'
+
+  if (presubmitTicket) {
+    const rec = presubmitByTicket.get(presubmitTicket)
+    if (!rec || rec.roomId !== room.id) {
+      res.status(400).json({ error: 'presubmit_ticket 无效' })
+      return
+    }
+    if (rec.expires < Date.now()) {
+      presubmitByTicket.delete(presubmitTicket)
+      res.status(400).json({ error: 'presubmit_ticket 已过期，请重新在控制台预提交' })
+      return
+    }
+    presubmitByTicket.delete(presubmitTicket)
+    commentId = rec.commentId
+    commentText = rec.text
+    commentSource = 'presubmit'
+  } else if (DH_JOB_REQUIRE_TICKET) {
+    res.status(403).json({
+      error: '已启用 DH_JOB_REQUIRE_TICKET=1，必须先调用 POST .../comment-presubmit 再携带 presubmit_ticket 创建任务',
+    })
     return
+  } else {
+    commentId = String(req.body?.comment_id || '').trim()
+    commentText = String(req.body?.comment_text || '').trim()
+    if (!commentId || !commentText) {
+      res.status(400).json({ error: '请提供 presubmit_ticket，或（开发模式）同时提供 comment_id 与 comment_text' })
+      return
+    }
   }
+
   const jobId = `job_${uuidv4().replace(/-/g, '').slice(0, 16)}`
   const job = {
     id: jobId,
@@ -199,6 +273,7 @@ app.post('/api/rooms/:id/digital-human/jobs', (req, res) => {
     liveId: room.liveId,
     commentId,
     commentText,
+    commentSource,
     status: 'pending',
     replyText: null,
     imageUrl: null,

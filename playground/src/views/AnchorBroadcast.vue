@@ -27,12 +27,44 @@
       </section>
 
       <section class="panel">
-        <h2 class="panel__title">评论管理（IM 真实弹幕）</h2>
+        <h2 class="panel__title">直播会话（startLive）</h2>
         <p class="hint">
-          与推流/数智人账号隔离：使用 <code>mod_*</code> 身份 <code>joinLive</code> 后拉取弹幕；仅当你点击「数字人任务」时，才把该条文本送入后端占位任务（后续替换为数智人 HTTP 驱动）。
+          根因：观众 <code>joinLive</code>、数智人进同一 <code>liveId</code> 前，TUILiveKit 侧需先有「直播」会话。此处用 <strong>主播</strong> 身份调用
+          <code>startLive</code>。同一浏览器只能持有一套登录态：已开启直播时，请勿在本页再点「连接评论管理」；需要边看播边审评论请
+          <strong>另开浏览器窗口</strong>打开本页仅作 <code>mod_*</code>。
         </p>
         <div class="mod-actions">
-          <button v-if="!modConnected" type="button" class="btn btn--primary" :disabled="modBusy" @click="connectMod">
+          <button
+            v-if="!anchorLiveActive"
+            type="button"
+            class="btn btn--primary"
+            :disabled="anchorBusy || modConnected"
+            @click="connectAnchorLive"
+          >
+            {{ anchorBusy ? '开启中…' : '以主播身份开启直播' }}
+          </button>
+          <button v-else type="button" class="btn" :disabled="anchorBusy" @click="disconnectAnchorLive">
+            {{ anchorBusy ? '结束中…' : '结束直播' }}
+          </button>
+        </div>
+        <p v-if="modConnected" class="hint">已连接评论管理时无法在本页开启直播，请先断开评论连接。</p>
+        <p v-if="anchorErr" class="err">{{ anchorErr }}</p>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel__title">评论管理（IM 真实弹幕）</h2>
+        <p class="hint">
+          与推流/数智人账号隔离：使用 <code>mod_*</code> 身份 <code>joinLive</code> 后拉取弹幕。点击「数字人任务」时，会先调用服务端
+          <code>comment-presubmit</code> 暂存本条权威文本，再创建任务（避免浏览器随意篡改 <code>comment_text</code>）。
+        </p>
+        <div class="mod-actions">
+          <button
+            v-if="!modConnected"
+            type="button"
+            class="btn btn--primary"
+            :disabled="modBusy || anchorLiveActive"
+            @click="connectMod"
+          >
             {{ modBusy ? '连接中…' : '连接评论管理' }}
           </button>
           <button v-else type="button" class="btn" :disabled="modBusy" @click="disconnectMod">断开评论连接</button>
@@ -88,6 +120,7 @@
             <pre class="mono mono--wrap">{{ dhJob.ivhPlayStreamAddr }}</pre>
           </template>
           <img v-if="dhJob.imageUrl" class="dhimg" :src="dhJob.imageUrl" alt="占位图" />
+          <p v-if="dhJob.commentSource" class="muted small">评论来源：<code>{{ dhJob.commentSource }}</code></p>
           <p v-if="dhJob.status === 'image_done' && !dhJob.imageUrl && !dhJob.ivhPlayStreamAddr" class="muted">
             TRTC 协议下可能无独立 PlayStreamAddr，请以观众端房间内画面为准。
           </p>
@@ -111,7 +144,7 @@ const route = useRoute()
 const roomId = computed(() => route.params.roomId)
 
 const { login, logout } = useLoginState()
-const { joinLive, leaveLive } = useLiveListState()
+const { joinLive, leaveLive, startLive, endLive } = useLiveListState()
 const { messageList } = useBarrageState()
 
 const room = ref(null)
@@ -121,6 +154,9 @@ const err = ref('')
 const modConnected = ref(false)
 const modBusy = ref(false)
 const modErr = ref('')
+const anchorLiveActive = ref(false)
+const anchorBusy = ref(false)
+const anchorErr = ref('')
 const dhErr = ref('')
 
 const dhJob = ref(null)
@@ -149,8 +185,65 @@ async function load() {
   }
 }
 
+async function connectAnchorLive() {
+  if (!room.value) return
+  if (modConnected.value) {
+    anchorErr.value = '请先断开评论管理，再开启直播。'
+    return
+  }
+  anchorErr.value = ''
+  dhErr.value = ''
+  anchorBusy.value = true
+  try {
+    const r = await fetch(`/api/rooms/${room.value.id}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'anchor' }),
+    })
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || r.statusText)
+    await login({ sdkAppId: j.sdkAppId, userId: j.userId, userSig: j.userSig })
+    await startLive({
+      liveId: room.value.liveId,
+      liveName: room.value.title || '直播',
+      notice: '',
+    })
+    anchorLiveActive.value = true
+  } catch (e) {
+    anchorErr.value = e?.message || String(e)
+    try {
+      await logout()
+    } catch {
+      /* noop */
+    }
+    anchorLiveActive.value = false
+  } finally {
+    anchorBusy.value = false
+  }
+}
+
+async function disconnectAnchorLive() {
+  if (!anchorLiveActive.value) return
+  anchorBusy.value = true
+  anchorErr.value = ''
+  try {
+    await endLive()
+    await logout()
+    anchorLiveActive.value = false
+  } catch (e) {
+    anchorErr.value = e?.message || String(e)
+  } finally {
+    anchorBusy.value = false
+  }
+}
+
 async function connectMod() {
   if (!room.value) return
+  if (anchorLiveActive.value) {
+    modErr.value =
+      '本页已以主播身份开启直播，无法在同一标签页再登录 mod。请新开浏览器窗口打开本控制台并仅「连接评论管理」，或先「结束直播」后再连 mod。'
+    return
+  }
   modErr.value = ''
   dhErr.value = ''
   modBusy.value = true
@@ -193,12 +286,24 @@ async function startDhJob(m) {
   dhBusyId.value = id
   dhErr.value = ''
   try {
+    const r0 = await fetch(`/api/rooms/${room.value.id}/digital-human/comment-presubmit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sequence: m.sequence,
+        timestamp_in_second: m.timestampInSecond,
+        sender_user_id: m.sender?.userId || '',
+        text: m.textContent,
+      }),
+    })
+    const j0 = await r0.json()
+    if (!r0.ok) throw new Error(j0.error || r0.statusText)
+
     const res = await fetch(`/api/rooms/${room.value.id}/digital-human/jobs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        comment_id: `im_${m.sequence}`,
-        comment_text: m.textContent,
+        presubmit_ticket: j0.ticket,
       }),
     })
     const job = await res.json()
@@ -225,7 +330,22 @@ async function pollDh() {
 }
 
 watch(roomId, async () => {
-  await disconnectMod()
+  if (anchorLiveActive.value) {
+    try {
+      await endLive()
+    } catch {
+      /* noop */
+    }
+    try {
+      await logout()
+    } catch {
+      /* noop */
+    }
+    anchorLiveActive.value = false
+  }
+  if (modConnected.value) {
+    await disconnectMod()
+  }
   dhJob.value = null
   await load()
 })
@@ -237,6 +357,19 @@ onMounted(() => {
 
 onUnmounted(async () => {
   if (pollTimer) clearInterval(pollTimer)
+  if (anchorLiveActive.value) {
+    try {
+      await endLive()
+    } catch {
+      /* noop */
+    }
+    try {
+      await logout()
+    } catch {
+      /* noop */
+    }
+    return
+  }
   if (modConnected.value) {
     try {
       await leaveLive()

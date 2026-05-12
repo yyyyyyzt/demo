@@ -32,15 +32,20 @@
 - **未配置 `IVH_*`** 时仍走占位图逻辑，便于本地无密钥调试。
 - **TRTC 对接形态**：创建会话采用 **外部 TRTC AppId + `TrtcStrRoomId` = 直播间 `liveId`**，并为数智人单独签发 `UserSig`（`UserId` 默认 `vh_{liveId 片段}_{job 后缀}`，可通过 `IVH_TRTC_USER_ID` 覆盖前缀），与主播 `anchor_*`、管理员 `mod_*` 区分。
 
-### 阶段三：观众端仅消费「房间内唯一主流」
+### 阶段三（当前提交）：观众端消费「房间内主流」— 先保证直播会话存在
 
-- 明确：**主播端不再用 Canvas 轨**；观众端 `LiveView` 仅订阅**官方一路视频**（数智人进房或转推后的主流）。
-- 若需由你方进程转推：评估 **TRTC 自定义采集** 或 **服务端混流**（不在本阶段拍板，依赖阶段二序列图）。
+- **根因**：`liveId` 若未在 TUILiveKit 侧通过 `startLive` 创建为「直播」，观众 `joinLive` 与数智人进房可能无法对齐同一业务会话。
+- **主播控制台** `/anchor/:roomId` 增加 **「以主播身份开启直播」**：`anchor_*` 登录后调用 `startLive({ liveId, liveName })`；**「结束直播」** 调用 `endLive`。
+- **约束（机制）**：`useLoginState` 为单例，**同一标签页不能同时持有主播与 mod 两套身份**；需要「直播进行中 + mod 审评论」时，请 **另开浏览器窗口** 再打开本页仅连接 `mod_*`（文档与页面内提示已写清）。
+- 观众端仍为官方 `LiveView`；Canvas 不作为默认路径（见阶段一）。
 
-### 阶段四：安全与运营节奏（与你方约束对齐）
+### 阶段四（当前提交）：评论进入数智人任务的「权威文本」路径
 
-- **仅人工点选**的评论进入任务；服务端以 **`message_id` / sequence 拉取 canonical 文本** 快照，拒绝浏览器随意传大段 `comment_text` 作为唯一信源。
-- HTTP 驱动文本：长度上限、字符过滤、频控、幂等；失败重试与会话关闭避免占并发。
+- **`POST /api/rooms/:id/digital-human/comment-presubmit`**：body 携带 IM 消息的 `sequence`、`timestamp_in_second`、`sender_user_id`、`text`，服务端生成 **一次性** `ticket`（内存、默认 15 分钟有效）并返回规范 `comment_id`。
+- **`POST .../digital-human/jobs`**：优先消费 `presubmit_ticket`，**驱动文本以服务端暂存为准**；未带 ticket 时仍兼容旧的 `comment_id` + `comment_text`（便于 curl）。环境变量 **`DH_JOB_REQUIRE_TICKET=1`** 时可关闭兼容路径，强制走 presubmit。
+- 任务对象增加 **`commentSource`**：`presubmit` | `client_body`。
+
+### 阶段五（占位）：更严审计（IM 服务端拉取 canonical）
 
 ---
 
@@ -50,10 +55,35 @@
 
 - `IVH_APP_KEY`、`IVH_ACCESS_TOKEN`、`IVH_VIRTUALMAN_PROJECT_ID`（资源中心获取）；可选 `IVH_TRTC_USER_ID`、`IVH_TRTC_PRIVATE_MAP_KEY`、`IVH_BASE_URL`。
 - 与 TRTC 现有变量并存：`TRTC_SDK_APP_ID`、`TRTC_SECRET_KEY`、`VITE_TRTC_SDK_APP_ID`。
+- 可选：`DH_JOB_REQUIRE_TICKET=1`（强制数字人任务必须带 `presubmit_ticket`）。
 
 ---
 
-## 四、当前代码入口速查
+## 四、一页纸序列图（目标形态）
+
+```mermaid
+sequenceDiagram
+  participant A as 主播浏览器
+  participant API as Demo API
+  participant IVH as 数智人 gw.tvs.qq.com
+  participant T as TRTC/TUILiveKit
+  participant V as 观众浏览器
+
+  A->>API: POST token role=anchor
+  A->>T: login + startLive(liveId)
+  V->>API: POST token role=audience
+  V->>T: joinLive(liveId) + LiveView
+
+  Note over A,API: 另开窗口 mod 或本页先后操作
+  A->>API: comment-presubmit(sequence, sender, text)
+  API-->>A: ticket
+  A->>API: digital-human/jobs presubmit_ticket
+  API->>IVH: createsession / statsession / startsession / SEND_TEXT / closesession
+  IVH->>T: 数智人进房推流（外部 AppId + liveId）
+  V->>T: 订阅房间内视频主流
+```
+
+## 五、当前代码入口速查
 
 | 路由 | 说明 |
 |------|------|
