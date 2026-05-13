@@ -150,7 +150,7 @@
       <section class="panel">
         <h2 class="panel__title">数字人任务结果</h2>
         <p class="hint">
-          已配置数智人时：服务端异步调用 <code>gw.tvs.qq.com</code>（创建会话 → 就绪 → 开启 → <code>SEND_TEXT</code> → 关闭）。未配置时仍为<strong>占位图演示</strong>，见上方「数智人配置」面板。
+          已配置数智人时：服务端异步调用 <code>gw.tvs.qq.com</code>（创建会话 → 就绪 → 开启 → <code>SEND_TEXT</code>；默认<strong>不立即 closesession</strong> 以保持 TRTC 画面）。未配置时仍为<strong>占位图演示</strong>，见上方「数智人配置」面板。
         </p>
         <template v-if="dhJob">
           <p class="job">
@@ -177,6 +177,9 @@
             class="hint hint--soft"
           >
             本条为<strong>未配置 IVH</strong>时的占位结果（随机图 + 上文说明），配置完整并重启 API 后将走真实数智人链路。
+          </p>
+          <p v-if="dhJob.ivhSessionKeptOpen" class="hint hint--soft">
+            数智人会话已保持开启（未自动 closesession），便于观众端持续拉流；下次同房间新任务会先关闭上一会话。
           </p>
           <p v-if="dhJob.status === 'image_done' && !dhJob.imageUrl && !dhJob.ivhPlayStreamAddr" class="muted">
             TRTC 协议下可能无独立 PlayStreamAddr，请以观众端房间内画面为准。

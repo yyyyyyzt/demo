@@ -9,6 +9,11 @@ import {
   ivhWaitUntilSessionStarted,
 } from './ivhApaas.mjs'
 
+/** 每个业务房间（rooms.json 的 id）当前未主动 closesession 的数智人会话，用于新任务前释放上一路推流 */
+const lastOpenIvhSessionByRoomInternalId = new Map()
+
+const IVH_AUTO_CLOSE_SESSION = process.env.IVH_AUTO_CLOSE_SESSION === '1'
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
 }
@@ -46,6 +51,16 @@ export async function runDigitalHumanPipeline(job, room, deps) {
   if (!isIvhConfigured()) {
     await runPlaceholderPipeline(job)
     return
+  }
+
+  const prevSessionId = lastOpenIvhSessionByRoomInternalId.get(room.id)
+  if (prevSessionId) {
+    try {
+      await ivhCloseSession(prevSessionId)
+    } catch {
+      /* noop */
+    }
+    lastOpenIvhSessionByRoomInternalId.delete(room.id)
   }
 
   let sessionId = null
@@ -90,9 +105,18 @@ export async function runDigitalHumanPipeline(job, room, deps) {
     if (p2.PlayStreamAddr) job.ivhPlayStreamAddr = p2.PlayStreamAddr
 
     await ivhSendText(sessionId, safeText)
-    await sleep(1200)
-    await ivhCloseSession(sessionId)
-    job.ivhClosed = true
+
+    // 默认不 closesession：否则数智人立即退房，观众端几乎看不到画面（日志里 peer-leave 即此）。
+    // 新任务开始时会先关闭本房间上一会话。联调/省并发可设 IVH_AUTO_CLOSE_SESSION=1。
+    if (IVH_AUTO_CLOSE_SESSION) {
+      await sleep(1200)
+      await ivhCloseSession(sessionId)
+      job.ivhClosed = true
+      lastOpenIvhSessionByRoomInternalId.delete(room.id)
+    } else {
+      job.ivhSessionKeptOpen = true
+      lastOpenIvhSessionByRoomInternalId.set(room.id, sessionId)
+    }
 
     job.status = 'image_done'
     job.imageUrl = null
@@ -108,5 +132,6 @@ export async function runDigitalHumanPipeline(job, room, deps) {
         /* noop */
       }
     }
+    lastOpenIvhSessionByRoomInternalId.delete(room.id)
   }
 }
