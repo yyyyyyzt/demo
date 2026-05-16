@@ -104,7 +104,7 @@ export async function runDigitalHumanPipeline(job, room, deps) {
     const p2 = stat2.Payload || {}
     if (p2.PlayStreamAddr) job.ivhPlayStreamAddr = p2.PlayStreamAddr
 
-    await ivhSendText(sessionId, safeText)
+    await ivhSendText(sessionId, safeText, { useChat: Boolean(job.ivhUseChat) })
 
     // 默认不 closesession：否则数智人立即退房，观众端几乎看不到画面（日志里 peer-leave 即此）。
     // 新任务开始时会先关闭本房间上一会话。联调/省并发可设 IVH_AUTO_CLOSE_SESSION=1。

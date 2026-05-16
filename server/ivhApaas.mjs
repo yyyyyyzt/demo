@@ -111,15 +111,23 @@ export async function ivhStartSession(sessionId) {
   })
 }
 
-export async function ivhSendText(sessionId, text) {
+/**
+ * @param {{ useChat?: boolean }} [options] — 与官方 H5 demo 一致：`useChat=true` 时 `ChatCommand` 为空走对话；否则 `NotUseChat` 纯文本驱动（TTS）
+ */
+export async function ivhSendText(sessionId, text, options = {}) {
+  const data = {
+    Text: String(text).slice(0, 4000),
+  }
+  if (options.useChat === true) {
+    data.ChatCommand = ''
+  } else {
+    data.ChatCommand = 'NotUseChat'
+  }
   return ivhPost('/v2/ivh/interactdriver/interactdriverservice/command', {
     ReqId: reqId32(),
     SessionId: sessionId,
     Command: 'SEND_TEXT',
-    Data: {
-      Text: String(text).slice(0, 4000),
-      ChatCommand: 'NotUseChat',
-    },
+    Data: data,
   })
 }
 

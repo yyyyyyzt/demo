@@ -10,7 +10,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
-import { getIvhEnvDiagnostics } from './ivhApaas.mjs'
+import { getIvhEnvDiagnostics, ivhSendText } from './ivhApaas.mjs'
 import { imSendGroupTextAsUser } from './imRest.mjs'
 import { runDigitalHumanPipeline } from './ivhPipeline.mjs'
 
@@ -44,6 +44,8 @@ const PRESUBMIT_TTL_MS = 15 * 60 * 1000
 const presubmitByTicket = new Map()
 
 const DH_JOB_REQUIRE_TICKET = process.env.DH_JOB_REQUIRE_TICKET === '1'
+/** 手动调试：POST .../manual-job、.../speak；生产可设 DH_ALLOW_MANUAL_JOB=0 */
+const DH_ALLOW_MANUAL_JOB = process.env.DH_ALLOW_MANUAL_JOB !== '0'
 
 function ensureDataDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -94,6 +96,7 @@ app.get('/api/health', (_req, res) => {
     ivhDocsSigning: 'https://cloud.tencent.com/document/product/1240/107197',
     ivhConsoleKeys: 'https://xiaowei.cloud.tencent.com/ivh#/asserts_management',
     dhJobRequireTicket: DH_JOB_REQUIRE_TICKET,
+    dhAllowManualJob: DH_ALLOW_MANUAL_JOB,
     imApprovePublishConfigured: Boolean(TRTC_SDK_APP_ID && TRTC_SECRET_KEY && IM_REST_ADMIN_USER_ID),
   })
 })
@@ -351,6 +354,93 @@ app.post('/api/rooms/:id/digital-human/jobs', (req, res) => {
     })
   })
   res.status(201).json(job)
+})
+
+/** 不经过评论 presubmit，直接排队一条数字人任务（学习/联调用；默认开启） */
+app.post('/api/rooms/:id/digital-human/manual-job', (req, res) => {
+  if (!DH_ALLOW_MANUAL_JOB) {
+    res.status(403).json({ error: 'DH_ALLOW_MANUAL_JOB=0 已关闭手动调试接口' })
+    return
+  }
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const commentText = String(req.body?.text || '').trim()
+  if (!commentText) {
+    res.status(400).json({ error: 'text 必填' })
+    return
+  }
+  const useChat = req.body?.use_chat === true || req.body?.use_chat === 'true'
+  const jobId = `job_${uuidv4().replace(/-/g, '').slice(0, 16)}`
+  const job = {
+    id: jobId,
+    roomId: room.id,
+    liveId: room.liveId,
+    commentId: `manual_${Date.now()}`,
+    commentText,
+    commentSource: 'manual_debug',
+    ivhUseChat: useChat,
+    status: 'pending',
+    replyText: null,
+    imageUrl: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  jobs.set(jobId, job)
+  roomActiveJob.set(room.id, jobId)
+  setImmediate(() => {
+    runDigitalHumanPipeline(job, room, {
+      genUserSig,
+      trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
+    }).catch((e) => {
+      job.status = 'failed'
+      job.ivhError = job.ivhError || e?.message || String(e)
+      job.updatedAt = new Date().toISOString()
+    })
+  })
+  res.status(201).json(job)
+})
+
+/** 对当前房间仍保持的数智人会话再发一句（多轮）；需任务 status=image_done */
+app.post('/api/rooms/:id/digital-human/speak', async (req, res) => {
+  if (!DH_ALLOW_MANUAL_JOB) {
+    res.status(403).json({ error: 'DH_ALLOW_MANUAL_JOB=0 已关闭手动调试接口' })
+    return
+  }
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const text = String(req.body?.text || '').trim()
+  if (!text) {
+    res.status(400).json({ error: 'text 必填' })
+    return
+  }
+  const useChat = req.body?.use_chat === true || req.body?.use_chat === 'true'
+  const jobId = roomActiveJob.get(room.id)
+  const job = jobId ? jobs.get(jobId) : null
+  if (!job?.ivhSessionId) {
+    res.status(409).json({ error: '当前无带 SessionId 的活跃任务，请先完成一次数字人任务' })
+    return
+  }
+  if (job.status !== 'image_done') {
+    res.status(409).json({ error: `请等待首条任务完成（需 status=image_done，当前为 ${job.status}）` })
+    return
+  }
+  try {
+    await ivhSendText(job.ivhSessionId, text, { useChat })
+    job.replyText = text.slice(0, 400)
+    job.updatedAt = new Date().toISOString()
+    res.json({ ok: true, job })
+  } catch (e) {
+    const code = e.statusCode || 502
+    res.status(code).json({ error: e.message || String(e), ivhHeader: e.ivhHeader })
+  }
 })
 
 app.get('/api/rooms/:id/digital-human/jobs/:jobId', (req, res) => {

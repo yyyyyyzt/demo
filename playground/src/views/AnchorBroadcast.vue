@@ -17,8 +17,8 @@
         <p class="hint">
           已<strong>取消默认 Canvas 自定义视频轨</strong>开播。下一步在服务端对接<strong>腾讯云智能数智人 · 云渲染</strong>（优先
           <strong>HTTP 一句话文本驱动</strong>），将会话输出作为观众在 TRTC 直播里看到的<strong>唯一主流</strong>；具体会话创建、流就绪、与 TRTC
-          进房参数对齐方式见仓库
-          <code>docs/trtc-ivh-integration.md</code>。
+          进房参数对齐方式见 <code>docs/trtc-ivh-integration.md</code>；<strong>SDK 与 HTTP API 两条最小学习路径</strong>见
+          <code>docs/ivh-minimal-integration.md</code>。
         </p>
         <p class="hint">
           若仍需旧版 Canvas 实验室推流，请使用独立入口（与正式数字人链路隔离）：
@@ -79,6 +79,47 @@
         </div>
         <p v-if="modConnected" class="hint">已连接评论管理时无法在本页开启直播，请先断开评论连接。</p>
         <p v-if="anchorErr" class="err">{{ anchorErr }}</p>
+      </section>
+
+      <section v-if="apiHealth?.dhAllowManualJob" class="panel panel--dh-debug">
+        <h2 class="panel__title">数字人 · 手动调试（API 云渲染最小联调）</h2>
+        <p class="hint">
+          详见仓库 <code>docs/ivh-minimal-integration.md</code> 与 <code>examples/ivh-api-smoke.sh</code>。对照官方
+          <a
+            class="inline-link"
+            href="https://github.com/TencentCloud/virtualman-render-demo/tree/main/server-render-demo"
+            target="_blank"
+            rel="noopener noreferrer"
+            >virtualman-render-demo / server-render-demo</a
+          >
+          （浏览器 SDK）；本页走服务端 aPaaS + 同 <code>liveId</code> 进 TRTC。
+        </p>
+        <p v-if="!anchorLiveActive" class="hint hint--warn">
+          请先「以主播身份开启直播」，再发测试句；观众端另开窗口进同一 liveId 观看。
+        </p>
+        <label class="dh-debug__field">
+          <span class="dh-debug__label">测试文本</span>
+          <textarea
+            v-model.trim="manualDhText"
+            class="dh-debug__textarea"
+            rows="3"
+            placeholder="复制 docs/ivh-minimal-integration.md 中的示例话术即可"
+          />
+        </label>
+        <label class="dh-debug__check">
+          <input v-model="manualDhUseChat" type="checkbox" />
+          <span>对话模式（空 ChatCommand；不勾选为 NotUseChat 纯播报）</span>
+        </label>
+        <div class="mod-actions">
+          <button type="button" class="btn btn--primary" :disabled="dhManualBusy || !room" @click="startManualDhJob">
+            {{ dhManualBusy ? '提交中…' : '发起手动数字人任务' }}
+          </button>
+          <button type="button" class="btn" :disabled="dhSpeakBusy || !canSpeakAgain" @click="speakAgainDh">
+            {{ dhSpeakBusy ? '发送中…' : '对当前会话再发一句' }}
+          </button>
+        </div>
+        <p v-if="dhManualErr" class="err">{{ dhManualErr }}</p>
+        <p class="muted small">生产可设 <code>DH_ALLOW_MANUAL_JOB=0</code> 关闭本区相关接口。</p>
       </section>
 
       <section class="panel">
@@ -220,6 +261,12 @@ const anchorBusy = ref(false)
 const anchorErr = ref('')
 const dhErr = ref('')
 
+const manualDhText = ref('欢迎各位来到直播间，我是数字人主播，下面为您介绍今天的精彩内容。')
+const manualDhUseChat = ref(false)
+const dhManualBusy = ref(false)
+const dhSpeakBusy = ref(false)
+const dhManualErr = ref('')
+
 const dhJob = ref(null)
 const dhBusyId = ref('')
 const approveBusyKey = ref('')
@@ -227,6 +274,15 @@ const approveSentKeys = ref([])
 const apiHealth = ref(null)
 let pollTimer = null
 let healthTimer = null
+
+const canSpeakAgain = computed(() =>
+  Boolean(
+    room.value &&
+      dhJob.value?.status === 'image_done' &&
+      dhJob.value?.ivhSessionId &&
+      !dhJob.value?.ivhClosed,
+  ),
+)
 
 async function refreshApiHealth() {
   try {
@@ -422,6 +478,57 @@ async function startDhJob(m) {
   }
 }
 
+async function startManualDhJob() {
+  if (!room.value) return
+  const text = manualDhText.value.trim()
+  if (!text) {
+    dhManualErr.value = '请输入测试文本。'
+    return
+  }
+  dhManualBusy.value = true
+  dhManualErr.value = ''
+  try {
+    const res = await fetch(`/api/rooms/${room.value.id}/digital-human/manual-job`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, use_chat: manualDhUseChat.value }),
+    })
+    const job = await res.json()
+    if (!res.ok) throw new Error(job.error || res.statusText)
+    dhJob.value = job
+    refreshApiHealth()
+  } catch (e) {
+    dhManualErr.value = e?.message || String(e)
+  } finally {
+    dhManualBusy.value = false
+  }
+}
+
+async function speakAgainDh() {
+  if (!room.value || !canSpeakAgain.value) return
+  const text = manualDhText.value.trim()
+  if (!text) {
+    dhManualErr.value = '请输入续发文本。'
+    return
+  }
+  dhSpeakBusy.value = true
+  dhManualErr.value = ''
+  try {
+    const res = await fetch(`/api/rooms/${room.value.id}/digital-human/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, use_chat: manualDhUseChat.value }),
+    })
+    const j = await res.json()
+    if (!res.ok) throw new Error(j.error || res.statusText)
+    dhJob.value = j.job
+  } catch (e) {
+    dhManualErr.value = e?.message || String(e)
+  } finally {
+    dhSpeakBusy.value = false
+  }
+}
+
 async function pollDh() {
   const id = roomId.value
   if (!id || !room.value) return
@@ -556,6 +663,58 @@ onUnmounted(async () => {
 .panel--ivh-env {
   border-color: rgba(255, 200, 120, 0.25);
   background: rgba(40, 28, 0, 0.22);
+}
+
+.panel--dh-debug {
+  border-color: rgba(120, 200, 255, 0.28);
+  background: rgba(0, 24, 40, 0.22);
+}
+
+.dh-debug__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.dh-debug__label {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.dh-debug__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 4.5rem;
+}
+
+.dh-debug__textarea:focus {
+  outline: none;
+  border-color: rgba(126, 184, 255, 0.55);
+}
+
+.dh-debug__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.68);
+  cursor: pointer;
+}
+
+.dh-debug__check input {
+  margin-top: 3px;
+  flex: 0 0 auto;
 }
 
 .hint--ok {
