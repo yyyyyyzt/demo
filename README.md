@@ -40,14 +40,28 @@
 
    关注 JSON 中的 `ivhConfigured`（应为 `true`）与 `ivhMissingEnvKeys`（应为 `[]`）。主播控制台页也会轮询该接口并展示「数智人配置」面板。
 
-4. 路由说明：
+4. 路由说明（**已重写为「最精简数字人直播 demo」**：观众/主播都用原生 `trtc-sdk-v5` 订阅远端视频；
+   不再走 TUILiveKit 的 `startLive`/`LiveView`，根因见下方「为什么改写」）。
 
-- **`/`**：观众端 — `LiveView` 看播；弹幕 **先审后发**（发送带 `audit=pending`，列表仅展示公区）；底部 `BarrageInput` 拦截发送；需主持人在 `/anchor` 批准并由服务端 IM REST 代发。
-- **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；数字人任务（已配置 IVH 时走云渲染，否则占位图）。
-- **`/anchor/:roomId`**：**主播控制台**（`startLive`；IM 评论管理含 **待审弹幕 / 批准显示 / 数字人任务**；**默认不再使用 Canvas**）。批准显示需配置 `IM_REST_ADMIN_USER_ID`（IM App 管理员）。页面会读取 `GET /api/health` 展示数智人环境变量是否就绪。集成说明见 `docs/trtc-ivh-integration.md`；**SDK 与 HTTP API 两条最小学习路径 + 示例话术**见 `docs/ivh-minimal-integration.md`，命令行联调见 `examples/ivh-api-smoke.sh`。
-- **`/anchor-canvas/:roomId`**：**Canvas 遗留推流**（原 `minimal-live-broadcast.html` 隐藏 iframe 方案，仅调试）。
+- **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；房间列表导航到主播 / 观众页。
+- **`/anchor/:roomId`**：**主播控制台 · 数字人直播测试** — 两步流程：① 点「主播开播」以 `anchor_*` 进入 TRTC
+  房间（仅监看，不推送本地摄像头）；② 点「发起数字人测试」调 `POST /api/rooms/:id/dh/start`，服务端通过
+  aPaaS（`createsession → startsession → SEND_TEXT`）让数智人作为另一路 TRTC 用户进同一 `liveId`。本页
+  通过 `trtc-sdk-v5` 监听 `REMOTE_VIDEO_AVAILABLE` 并自动渲染数字人画面。「停止数字人」会调用
+  `POST .../dh/stop` 主动 `closesession`，释放并发。
+- **`/`**：**观众 H5** — 填 `liveId` + SDKAppID + 观众 `userId`，调 `POST /api/usersig` 取 UserSig 后用
+  `trtc-sdk-v5` 以 `audience` 角色进入同一字符串房间号，监听并渲染数字人远端视频。
+- **`/anchor-canvas/:roomId`**：**Canvas 遗留推流**（隐藏 iframe 方案，仅调试）。
 - **`/legacy`**：历史调试页（点赞 + 腾讯观众 JSON 面板）。
 - **`/archive/playground`**：重定向到 `/legacy`。
+
+### 为什么把主播 / 观众改成原生 TRTC？
+
+| 现象 | 根因 | 处理 |
+|------|------|------|
+| 旧 demo 数字人开播后能听到声音，但管理台 / 观众页无画面 | TUILiveKit `LiveView` 只渲染**直播会话的 anchor**那一路视频；数字人是同房间另一 TRTC 用户，音频会被自动混音，但视频不会被 `LiveView` 渲染 | 主播 / 观众页改用原生 `trtc-sdk-v5` 直接 `enterRoom(strRoomId=liveId)` + `startRemoteVideo({ userId })`；与「谁是 anchor」解耦 |
+| 服务端 aPaaS 创建会话时的 `TrtcStrRoomId` 等于业务 `liveId` | `liveId` 即字符串房间号，双方必须用同一种房间号语义进房 | 客户端固定走 `strRoomId`，与 `server/ivhPipeline.mjs` 一致 |
+| 数字人会话默认保留以维持推流 | `IVH_AUTO_CLOSE_SESSION=1` 时立刻 closesession 会让观众几乎看不到画面 | 提供 `POST /api/rooms/:id/dh/stop` 显式关闭；下一次 start 会自动先关上一会话 |
 
 5. Canvas 开播静态页也可直接打开仓库内 `demo/minimal-live-broadcast.html`（与 Playground 内嵌页逻辑一致；支持 URL 查询参数预填，见该文件内注释）。
 

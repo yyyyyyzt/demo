@@ -223,5 +223,33 @@ server/                     # 若引入 Node 后端
 4. [x] 迁移 `minimal-live-broadcast.html` 核心逻辑到 Vue 主播页，参数从「管理台跳转」带入。
 5. [x] 增加评论拉取与数字人任务 API（Mock → 真实 IM → 真实 LLM/生图）。
 6. [x] 服务端对接数智人云渲染 HTTP（`ivhApaas` + `ivhPipeline`）；任务记录 `ivhSessionId` 等字段；详见 `docs/trtc-ivh-integration.md`。
+7. [x] **根因修正**：主播/观众页改用原生 `trtc-sdk-v5` 直接 `enterRoom` + 监听 `REMOTE_VIDEO_AVAILABLE`，不再依赖 TUILiveKit 的 `startLive`/`LiveView`（后者只会渲染「直播 anchor」那一路视频，数字人作为同房间另一用户的画面会被忽略——这是「能听见声音、看不到画面」的根因）。
+
+---
+
+## 九、根因复盘：数字人直播一直没有测试成功 → 现已修正
+
+### 9.1 现象
+
+- 旧主播页：以主播身份 `startLive` → 「发起数字人任务」 → 服务端 aPaaS `createsession(TrtcStrRoomId=liveId)` → 听得到声音。
+- 管理台 / 观众端 `LiveView` 看不到数字人的画面。
+
+### 9.2 根因（数据在哪、谁权威）
+
+- TRTC 房间内的**音频**默认自动混音 → 所有同房间用户互相听得到。
+- TRTC 房间内的**视频**需要订阅者显式 `startRemoteVideo({ userId })`。
+- TUILiveKit `LiveView` 内部只订阅并渲染**该 live 的 anchor**（即调用 `startLive` 的那个用户）发布的主流；数字人是由 aPaaS 以另一名 TRTC 用户进入同一房间推流，对 `LiveView` 而言不是 anchor，**故不会被渲染**。
+- 这意味着「数字人能不能被看到」与「TUILiveKit 是否认为他是 anchor」直接绑定——而我们无法让服务端 aPaaS 反过来调 TUILiveKit 的 `startLive`。
+
+### 9.3 决策（最短路径）
+
+- 主播 / 观众页**绕过** `LiveView`，改用原生 `trtc-sdk-v5`：进同一 `strRoomId`（=业务 `liveId`），监听 `REMOTE_VIDEO_AVAILABLE`，对任意推流者执行 `startRemoteVideo`。
+- 服务端新增：`POST /api/rooms/:id/dh/start`（启动数字人 = manual-job 等价封装）、`POST /api/rooms/:id/dh/stop`（主动 `closesession` 释放并发；下一次 start 仍会自动先关上一会话）。
+- 主播页变成「两键最小 demo」：① 主播开播（仅进 TRTC 房间监看），② 发起数字人测试。观众页只需 liveId / SDKAppID / userId 即可看到同一房间内数字人的画面。
+
+### 9.4 决策可辩护
+
+- 数据权威没有变：TRTC 房间仍是视频流权威，aPaaS 仍是数字人会话权威，`rooms.json` 仍是房间元数据权威；只是**前端订阅策略**从「让 TUILiveKit 选谁是 anchor」改为「订阅任意远端推流者」。
+- 重启后是否成立：浏览器刷新仍然能恢复（重新签 UserSig + 进房）；服务端 `lastOpenIvhSessionByRoomInternalId` 内存里若丢，最坏只是下次 start 时不会先关上一会话——aPaaS 侧靠 `closesession` 释放并发即可。
 
 *文档版本：与仓库 `main` 分支同步迭代；修改本文件时请同步更新「当前仓库事实」一节中的路径与行为描述。*

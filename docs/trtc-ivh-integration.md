@@ -88,9 +88,15 @@ sequenceDiagram
 
 | 路由 | 说明 |
 |------|------|
-| `/anchor/:roomId` | 主播控制台（TRTC+数智人主路径；评论管理） |
+| `/anchor/:roomId` | 主播控制台「两键最小 demo」：① 主播开播（进 TRTC 房间监看），② 发起数字人测试（aPaaS createsession+SEND_TEXT） |
 | `/anchor-canvas/:roomId` | Canvas 遗留推流（调试用） |
-| `/` | 观众端 `LiveView` + 弹幕 |
+| `/` | 观众 H5：`trtc-sdk-v5` 进同一 `strRoomId=liveId`，订阅数字人远端视频 |
+
+### 五·补 — 为什么不再用 `LiveView`（根因记录）
+
+`tuikit-atomicx-vue3` 的 `<LiveView>` 仅渲染**该 Live 的 anchor**（即调用过 `startLive` 的用户）发布的主流；数字人由 aPaaS 以同房间另一 TRTC 用户身份推流，**不会**被 `LiveView` 识别为 anchor。
+TRTC 默认仅自动播放远端音频，远端视频需要订阅者显式 `startRemoteVideo({ userId })`，因此「能听到声音、看不到画面」的现象与产品语义吻合。
+当前最短的修正路径是在主播页 / 观众页**绕过 `LiveView`**，直接用 `trtc-sdk-v5` 监听 `REMOTE_VIDEO_AVAILABLE` 并渲染——见 `playground/src/utils/useTrtcStage.js`。
 
 ---
 
