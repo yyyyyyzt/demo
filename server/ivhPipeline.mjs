@@ -12,6 +12,19 @@ import {
 /** 每个业务房间（rooms.json 的 id）当前未主动 closesession 的数智人会话，用于新任务前释放上一路推流 */
 const lastOpenIvhSessionByRoomInternalId = new Map()
 
+/** 主动结束某房间当前的数智人会话（用于「停止数字人」UI） */
+export async function closeRoomIvhSession(roomInternalId) {
+  const sessionId = lastOpenIvhSessionByRoomInternalId.get(roomInternalId)
+  if (!sessionId) return { closed: false, reason: 'no_active_session' }
+  lastOpenIvhSessionByRoomInternalId.delete(roomInternalId)
+  try {
+    await ivhCloseSession(sessionId)
+    return { closed: true, sessionId }
+  } catch (e) {
+    return { closed: false, sessionId, reason: e?.message || String(e) }
+  }
+}
+
 const IVH_AUTO_CLOSE_SESSION = process.env.IVH_AUTO_CLOSE_SESSION === '1'
 
 function sleep(ms) {

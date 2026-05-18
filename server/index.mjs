@@ -12,7 +12,7 @@ import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
 import { getIvhEnvDiagnostics, ivhSendText } from './ivhApaas.mjs'
 import { imSendGroupTextAsUser } from './imRest.mjs'
-import { runDigitalHumanPipeline } from './ivhPipeline.mjs'
+import { closeRoomIvhSession, runDigitalHumanPipeline } from './ivhPipeline.mjs'
 
 const require = createRequire(import.meta.url)
 const { Api: TLSSigApi } = require('tls-sig-api-v2')
@@ -456,6 +456,69 @@ app.get('/api/rooms/:id/digital-human/jobs/:jobId', (req, res) => {
     return
   }
   res.json(job)
+})
+
+/** 最精简 demo：开始一条数字人测试任务（同 manual-job，但路径更短，便于「点击按钮」一键发起） */
+app.post('/api/rooms/:id/dh/start', (req, res) => {
+  if (!DH_ALLOW_MANUAL_JOB) {
+    res.status(403).json({ error: 'DH_ALLOW_MANUAL_JOB=0 已关闭手动调试接口' })
+    return
+  }
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const commentText = String(req.body?.text || '欢迎来到直播间，我是数字人主播，下面为大家带来一段精彩的直播测试。').trim()
+  const useChat = req.body?.use_chat === true || req.body?.use_chat === 'true'
+  const jobId = `job_${uuidv4().replace(/-/g, '').slice(0, 16)}`
+  const job = {
+    id: jobId,
+    roomId: room.id,
+    liveId: room.liveId,
+    commentId: `dh_${Date.now()}`,
+    commentText,
+    commentSource: 'dh_minimal',
+    ivhUseChat: useChat,
+    status: 'pending',
+    replyText: null,
+    imageUrl: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  jobs.set(jobId, job)
+  roomActiveJob.set(room.id, jobId)
+  setImmediate(() => {
+    runDigitalHumanPipeline(job, room, {
+      genUserSig,
+      trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
+    }).catch((e) => {
+      job.status = 'failed'
+      job.ivhError = job.ivhError || e?.message || String(e)
+      job.updatedAt = new Date().toISOString()
+    })
+  })
+  res.status(201).json(job)
+})
+
+/** 主动停止当前房间数字人会话；释放并发，前端「停止数字人」按钮使用 */
+app.post('/api/rooms/:id/dh/stop', async (req, res) => {
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const result = await closeRoomIvhSession(room.id)
+  const jobId = roomActiveJob.get(room.id)
+  const job = jobId ? jobs.get(jobId) : null
+  if (job) {
+    job.ivhClosed = true
+    job.updatedAt = new Date().toISOString()
+  }
+  roomActiveJob.delete(room.id)
+  res.json({ ok: true, ...result, job: job || null })
 })
 
 app.get('/api/rooms/:id/digital-human/active-job', (req, res) => {
