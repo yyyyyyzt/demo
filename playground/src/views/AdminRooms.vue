@@ -1,8 +1,12 @@
 <template>
   <div class="admin">
     <header class="admin__head">
-      <h1 class="admin__title">直播间管理</h1>
-      <p class="admin__sub">REST：创建房间后，用「主播开播」与观众端同一 liveId 联调。评论走腾讯云 IM（TUILiveKit 弹幕），请在观众端发送、在主播页查看与管理。</p>
+      <h1 class="admin__title">数字人直播 · 管理台</h1>
+      <p class="admin__sub">
+        最精简流程：1) 在此创建一个房间； 2) 进入「主播控制台」点「主播开播」→「发起数字人测试」；
+        3) 新开窗口打开「观众 H5」用同一 <code>liveId</code> 看播。主播页与观众页都用原生
+        <code>trtc-sdk-v5</code> 订阅房间内远端视频，能直接看到数字人画面（不依赖 TUILiveKit 的 anchor 流概念）。
+      </p>
       <nav class="admin__nav">
         <RouterLink to="/">观众端</RouterLink>
         <RouterLink to="/legacy">历史调试</RouterLink>
@@ -28,8 +32,8 @@
             <code>{{ r.liveId }}</code>
           </div>
           <div class="room__actions">
+            <RouterLink class="btn btn--sm btn--primary" :to="`/anchor/${r.id}`">主播控制台</RouterLink>
             <RouterLink class="btn btn--sm" :to="{ path: '/', query: { liveId: r.liveId } }">观众 H5</RouterLink>
-            <RouterLink class="btn btn--sm" :to="`/anchor/${r.id}`">主播控制台</RouterLink>
             <RouterLink class="btn btn--sm btn--ghost" :to="`/anchor-canvas/${r.id}`">Canvas 遗留</RouterLink>
           </div>
         </li>

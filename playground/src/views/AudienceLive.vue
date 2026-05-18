@@ -2,15 +2,14 @@
   <div class="audience">
     <template v-if="!joined">
       <main class="gate">
-        <h1 class="gate__title">观众端</h1>
+        <h1 class="gate__title">观众端 · 数字人直播</h1>
         <p class="gate__hint">
-          使用腾讯云 TUILiveKit 官方 <strong>LiveView</strong> 观看直播，弹幕走 <strong>IM 真实链路</strong>；当前为<strong>先审后发</strong>：您发送的文本需主持人在控制台放行后才会出现在公区列表。请先启动 API 服务（含 TRTC 密钥）后点此进房；详见
-          <code>README.md</code>。
+          填入与主播相同的直播间 ID（即创建房间返回的 <code>liveId</code>），点击「进入直播间」后通过原生 TRTC SDK 直接订阅房间内任意远端视频流（含数字人）。
         </p>
 
         <label class="field">
           <span>直播间 ID（liveId）</span>
-          <input v-model.trim="liveIdInput" type="text" autocomplete="off" placeholder="与管理台 / 主播开播一致" />
+          <input v-model.trim="liveIdInput" type="text" autocomplete="off" placeholder="例如：live_xxxxxxxxxxxx" />
         </label>
         <label class="field">
           <span>SDKAppID</span>
@@ -18,14 +17,14 @@
         </label>
         <label class="field">
           <span>观众 userId（用于签发 UserSig）</span>
-          <input v-model.trim="guestNickname" type="text" autocomplete="off" />
+          <input v-model.trim="guestUserId" type="text" autocomplete="off" />
         </label>
 
         <p v-if="gateError" class="msg msg--err">{{ gateError }}</p>
 
         <div class="gate__actions">
           <button type="button" class="btn btn--primary" :disabled="busy" @click="doJoin">
-            {{ busy ? '进房中…' : '获取票据并进入' }}
+            {{ busy ? '进房中…' : '进入直播间' }}
           </button>
         </div>
 
@@ -44,30 +43,10 @@
             {{ busy ? '…' : '离开' }}
           </button>
         </header>
-        <p v-if="ended" class="banner">直播已结束，可点「离开」后换房间重试。</p>
-        <p v-if="sessionError" class="banner banner--err">{{ sessionError }}</p>
+        <p v-if="trtcError" class="banner banner--err">{{ trtcError }}</p>
         <div class="live-body">
-          <div class="live-stage">
-            <LiveView class="live-view-root" />
-          </div>
-          <div class="barrage-dock">
-            <p class="barrage-moderation-hint">先审后发：发送后需主持人「批准显示」才会出现在下方公区。</p>
-            <div ref="barrageScrollRef" class="barrage-list audience-barrage-list">
-              <template v-if="visibleBarrages.length">
-                <div v-for="m in visibleBarrages" :key="msgRowKey(m)" class="audience-barrage-row">
-                  <span class="audience-barrage-user">{{ m.sender?.userName || m.sender?.userId }}</span>
-                  <span class="audience-barrage-text">{{ m.textContent }}</span>
-                </div>
-              </template>
-              <p v-else class="audience-barrage-empty">暂无公区弹幕</p>
-            </div>
-            <BarrageInput
-              class="barrage-input"
-              min-height="52px"
-              max-height="120px"
-              :on-will-send-barrage="onWillSendBarrage"
-            />
-          </div>
+          <div ref="stageRef" class="live-stage" />
+          <p v-if="!hasRemoteVideo" class="live-overlay">等待主播或数字人画面…</p>
         </div>
       </div>
     </template>
@@ -75,17 +54,9 @@
 </template>
 
 <script setup>
-import { ref, watch, onUnmounted, computed, nextTick } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  LiveView,
-  BarrageInput,
-  useLoginState,
-  useLiveListState,
-  LiveListEvent,
-  useBarrageState,
-} from 'tuikit-atomicx-vue3'
-import { isPendingBarrage, barrageDedupeKey } from '../utils/barrageAudit.js'
+import { useTrtcStage } from '../utils/useTrtcStage.js'
 
 function normalizeEnvSdk() {
   const raw = import.meta.env.VITE_TRTC_SDK_APP_ID
@@ -98,64 +69,16 @@ function normalizeEnvSdk() {
 const route = useRoute()
 const router = useRouter()
 
-const { login } = useLoginState()
-const { joinLive, leaveLive, subscribeEvent, unsubscribeEvent } = useLiveListState()
-const { messageList, sendTextMessage } = useBarrageState()
-
-const barrageScrollRef = ref(null)
-
-const visibleBarrages = computed(() =>
-  (messageList.value || []).filter((m) => {
-    if (m.messageType !== 0) return true
-    return !isPendingBarrage(m)
-  }),
-)
-
-function msgRowKey(m) {
-  return barrageDedupeKey(m)
-}
-
-function scrollBarrageBottom() {
-  const el = barrageScrollRef.value
-  if (!el) return
-  el.scrollTop = el.scrollHeight
-}
-
-watch(
-  visibleBarrages,
-  () => {
-    nextTick(() => scrollBarrageBottom())
-  },
-  { deep: true },
-)
-
-/**
- * 拦截默认发送，改为带 audit=pending 的 extensionInfo（与主播端审核、IM REST 公区代发一致）
- * @param {{ textContent: string }} draft
- */
-async function onWillSendBarrage(draft) {
-  const text = String(draft?.textContent || '').trim()
-  if (!text) return false
-  await sendTextMessage({
-    text,
-    extensionInfo: { audit: 'pending' },
-  })
-  return false
-}
+const { stageRef, errorMessage: trtcError, hasRemoteVideo, enterRoom, exitRoom } = useTrtcStage()
 
 const liveIdInput = ref(String(route.query.liveId || ''))
 const sdkAppIdInput = ref(normalizeEnvSdk())
-const guestNickname = ref(`viewer_${Math.random().toString(36).slice(2, 10)}`)
+const guestUserId = ref(`viewer_${Math.random().toString(36).slice(2, 10)}`)
 
 const joined = ref(false)
 const joinedLiveId = ref('')
 const busy = ref(false)
 const gateError = ref('')
-const sessionError = ref('')
-const ended = ref(false)
-
-/** @type {Array<() => void>} */
-let unsubscribers = []
 
 watch(
   () => route.query.liveId,
@@ -164,21 +87,8 @@ watch(
   },
 )
 
-function clearLiveSubs() {
-  unsubscribers.forEach((fn) => {
-    try {
-      fn()
-    } catch {
-      /* noop */
-    }
-  })
-  unsubscribers = []
-}
-
 async function doJoin() {
   gateError.value = ''
-  sessionError.value = ''
-  ended.value = false
   const liveId = liveIdInput.value.trim()
   if (!liveId) {
     gateError.value = '请填写直播间 ID（liveId）。'
@@ -189,7 +99,7 @@ async function doJoin() {
     gateError.value = '请填写有效 SDKAppID，或在 .env 中配置 VITE_TRTC_SDK_APP_ID。'
     return
   }
-  const userId = guestNickname.value.trim() || `viewer_${Date.now()}`
+  const userId = guestUserId.value.trim() || `viewer_${Date.now()}`
   busy.value = true
   try {
     const sigRes = await fetch('/api/usersig', {
@@ -200,27 +110,21 @@ async function doJoin() {
     const sigJson = await sigRes.json().catch(() => ({}))
     if (!sigRes.ok) throw new Error(sigJson.error || sigRes.statusText)
 
-    await login({ sdkAppId, userId, userSig: sigJson.userSig })
-    await joinLive({ liveId })
-
-    const onEnded = () => {
-      ended.value = true
-    }
-    const onKicked = () => {
-      sessionError.value = '已被踢出直播间。'
-    }
-    subscribeEvent(LiveListEvent.onLiveEnded, onEnded)
-    subscribeEvent(LiveListEvent.onKickedOutOfLive, onKicked)
-    unsubscribers.push(
-      () => unsubscribeEvent(LiveListEvent.onLiveEnded, onEnded),
-      () => unsubscribeEvent(LiveListEvent.onKickedOutOfLive, onKicked),
-    )
-
     joinedLiveId.value = liveId
     joined.value = true
     await router.replace({ path: '/', query: { ...route.query, liveId } })
+
+    await enterRoom({
+      sdkAppId,
+      userId,
+      userSig: sigJson.userSig,
+      strRoomId: liveId,
+      role: 'audience',
+    })
   } catch (e) {
     gateError.value = e?.message || String(e)
+    joined.value = false
+    joinedLiveId.value = ''
   } finally {
     busy.value = false
   }
@@ -229,22 +133,16 @@ async function doJoin() {
 async function doLeave() {
   busy.value = true
   try {
-    clearLiveSubs()
-    await leaveLive()
+    await exitRoom()
     joined.value = false
     joinedLiveId.value = ''
-    sessionError.value = ''
-    ended.value = false
-  } catch (e) {
-    sessionError.value = e?.message || String(e)
   } finally {
     busy.value = false
   }
 }
 
 onUnmounted(() => {
-  clearLiveSubs()
-  if (joined.value) leaveLive().catch(() => {})
+  if (joined.value) exitRoom().catch(() => {})
 })
 </script>
 
@@ -403,6 +301,7 @@ onUnmounted(() => {
 }
 
 .live-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -412,78 +311,29 @@ onUnmounted(() => {
 .live-stage {
   flex: 1;
   min-height: 0;
-  position: relative;
-}
-
-.live-view-root {
+  background: #000;
   width: 100%;
-  height: 100%;
 }
 
-.barrage-dock {
-  flex: 0 0 auto;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(10, 12, 20, 0.96);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-.barrage-moderation-hint {
+.live-overlay {
+  position: absolute;
+  inset: 0;
   margin: 0;
-  padding: 6px 12px 0;
-  font-size: 0.72rem;
-  line-height: 1.45;
-  color: rgba(255, 210, 140, 0.88);
-}
-
-.audience-barrage-list {
-  max-height: min(32vh, 220px);
-  overflow-y: auto;
-  padding: 6px 10px 8px;
-}
-
-.audience-barrage-row {
   display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-
-.audience-barrage-user {
-  flex: 0 0 auto;
-  max-width: 36%;
-  color: rgba(180, 220, 255, 0.95);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.audience-barrage-text {
-  flex: 1;
-  min-width: 0;
-  color: rgba(255, 255, 255, 0.88);
-  word-break: break-word;
-}
-
-.audience-barrage-empty {
-  margin: 0;
-  padding: 12px 8px;
-  font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.45);
-}
-
-.barrage-input {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.55);
 }
 </style>
 
 <style>
-.live-view-root.live-core-view-container,
-.live-view-root .live-core-view-container {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
+.live-stage > div,
+.live-stage video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  background: #000;
 }
 </style>
