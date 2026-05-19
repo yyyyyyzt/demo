@@ -134,6 +134,10 @@ const dhStarting = ref(false)
 const dhStopping = ref(false)
 const dhError = ref('')
 const dhJob = ref(null)
+
+/** 与 server `dh/start` 默认文案一致；走 `digital-human/manual-job` 以兼容仅代理到旧版 API 或 preview 未配置时的路径习惯 */
+const DH_DEFAULT_SCRIPT =
+  '欢迎来到直播间，我是数字人主播，下面为大家带来一段精彩的直播测试。'
 const apiHealth = ref(null)
 let pollTimer = null
 let healthTimer = null
@@ -222,10 +226,10 @@ async function onStartDh() {
   dhStarting.value = true
   dhError.value = ''
   try {
-    const r = await fetch(`/api/rooms/${room.value.id}/dh/start`, {
+    const r = await fetch(`/api/rooms/${room.value.id}/digital-human/manual-job`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ text: DH_DEFAULT_SCRIPT, use_chat: false }),
     })
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
@@ -241,7 +245,7 @@ async function onStopDh() {
   if (!room.value) return
   dhStopping.value = true
   try {
-    const r = await fetch(`/api/rooms/${room.value.id}/dh/stop`, {
+    const r = await fetch(`/api/rooms/${room.value.id}/digital-human/stop-session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     })

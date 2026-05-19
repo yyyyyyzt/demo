@@ -32,6 +32,8 @@
 
    单独启动 API：`npm run server`。
 
+   使用 `npm run preview` 预览构建产物时，请**同时**在另一终端运行 `npm run server`（默认 `127.0.0.1:3001`）；`vite.config.js` 已为 `preview` 配置与 `dev` 相同的 `/api` 反向代理。
+
 3. **自检数智人环境变量是否生效**（填完 `.env` 并重启 API 后）：
 
    ```bash
@@ -45,10 +47,10 @@
 
 - **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；房间列表导航到主播 / 观众页。
 - **`/anchor/:roomId`**：**主播控制台 · 数字人直播测试** — 两步流程：① 点「主播开播」以 `anchor_*` 进入 TRTC
-  房间（仅监看，不推送本地摄像头）；② 点「发起数字人测试」调 `POST /api/rooms/:id/dh/start`，服务端通过
+  房间（仅监看，不推送本地摄像头）；② 点「发起数字人测试」调 `POST /api/rooms/:id/digital-human/manual-job`（与 `POST .../dh/start` 等价，后者为短路径别名），服务端通过
   aPaaS（`createsession → startsession → SEND_TEXT`）让数智人作为另一路 TRTC 用户进同一 `liveId`。本页
   通过 `trtc-sdk-v5` 监听 `REMOTE_VIDEO_AVAILABLE` 并自动渲染数字人画面。「停止数字人」会调用
-  `POST .../dh/stop` 主动 `closesession`，释放并发。
+  `POST .../digital-human/stop-session`（与 `POST .../dh/stop` 相同）主动 `closesession`，释放并发。
 - **`/`**：**观众 H5** — 填 `liveId` + SDKAppID + 观众 `userId`，调 `POST /api/usersig` 取 UserSig 后用
   `trtc-sdk-v5` 以 `audience` 角色进入同一字符串房间号，监听并渲染数字人远端视频。
 - **`/anchor-canvas/:roomId`**：**Canvas 遗留推流**（隐藏 iframe 方案，仅调试）。
@@ -61,7 +63,7 @@
 |------|------|------|
 | 旧 demo 数字人开播后能听到声音，但管理台 / 观众页无画面 | TUILiveKit `LiveView` 只渲染**直播会话的 anchor**那一路视频；数字人是同房间另一 TRTC 用户，音频会被自动混音，但视频不会被 `LiveView` 渲染 | 主播 / 观众页改用原生 `trtc-sdk-v5` 直接 `enterRoom(strRoomId=liveId)` + `startRemoteVideo({ userId })`；与「谁是 anchor」解耦 |
 | 服务端 aPaaS 创建会话时的 `TrtcStrRoomId` 等于业务 `liveId` | `liveId` 即字符串房间号，双方必须用同一种房间号语义进房 | 客户端固定走 `strRoomId`，与 `server/ivhPipeline.mjs` 一致 |
-| 数字人会话默认保留以维持推流 | `IVH_AUTO_CLOSE_SESSION=1` 时立刻 closesession 会让观众几乎看不到画面 | 提供 `POST /api/rooms/:id/dh/stop` 显式关闭；下一次 start 会自动先关上一会话 |
+| 数字人会话默认保留以维持推流 | `IVH_AUTO_CLOSE_SESSION=1` 时立刻 closesession 会让观众几乎看不到画面 | 提供 `POST /api/rooms/:id/digital-human/stop-session`（或 `dh/stop`）显式关闭；下一次 start 会自动先关上一会话 |
 
 5. Canvas 开播静态页也可直接打开仓库内 `demo/minimal-live-broadcast.html`（与 Playground 内嵌页逻辑一致；支持 URL 查询参数预填，见该文件内注释）。
 

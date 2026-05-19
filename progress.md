@@ -244,7 +244,7 @@ server/                     # 若引入 Node 后端
 ### 9.3 决策（最短路径）
 
 - 主播 / 观众页**绕过** `LiveView`，改用原生 `trtc-sdk-v5`：进同一 `strRoomId`（=业务 `liveId`），监听 `REMOTE_VIDEO_AVAILABLE`，对任意推流者执行 `startRemoteVideo`。
-- 服务端新增：`POST /api/rooms/:id/dh/start`（启动数字人 = manual-job 等价封装）、`POST /api/rooms/:id/dh/stop`（主动 `closesession` 释放并发；下一次 start 仍会自动先关上一会话）。
+- 服务端新增：`POST /api/rooms/:id/dh/start`（启动数字人 = manual-job 等价封装）、`POST /api/rooms/:id/dh/stop` 与 `POST .../digital-human/stop-session`（主动 `closesession` 释放并发；下一次 start 仍会自动先关上一会话）。主播页调用 `manual-job` / `stop-session` 以避免 preview 场景下短路径未命中代理时的 404。
 - 主播页变成「两键最小 demo」：① 主播开播（仅进 TRTC 房间监看），② 发起数字人测试。观众页只需 liveId / SDKAppID / userId 即可看到同一房间内数字人的画面。
 
 ### 9.4 决策可辩护

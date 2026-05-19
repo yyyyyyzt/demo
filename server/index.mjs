@@ -503,7 +503,7 @@ app.post('/api/rooms/:id/dh/start', (req, res) => {
 })
 
 /** 主动停止当前房间数字人会话；释放并发，前端「停止数字人」按钮使用 */
-app.post('/api/rooms/:id/dh/stop', async (req, res) => {
+async function stopRoomDigitalHuman(req, res) {
   const rooms = loadRooms()
   const room = rooms.find((r) => r.id === req.params.id)
   if (!room) {
@@ -519,7 +519,10 @@ app.post('/api/rooms/:id/dh/stop', async (req, res) => {
   }
   roomActiveJob.delete(room.id)
   res.json({ ok: true, ...result, job: job || null })
-})
+}
+
+app.post('/api/rooms/:id/dh/stop', stopRoomDigitalHuman)
+app.post('/api/rooms/:id/digital-human/stop-session', stopRoomDigitalHuman)
 
 app.get('/api/rooms/:id/digital-human/active-job', (req, res) => {
   const rooms = loadRooms()

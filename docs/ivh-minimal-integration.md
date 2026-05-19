@@ -66,6 +66,8 @@ npm run dev
 |------|------|------|
 | `GET` | `/api/health` | TRTC / IVH / `dhAllowManualJob` 等诊断 |
 | `POST` | `/api/rooms/:id/digital-human/manual-job` | Body：`{ "text": "...", "use_chat": false }`。不走评论 presubmit，适合学习 |
+| `POST` | `/api/rooms/:id/digital-human/stop-session` | 主动 `closesession` 结束当前房间数智人会话（与 `POST .../dh/stop` 相同） |
+| `POST` | `/api/rooms/:id/dh/start` | 与 `manual-job` 等价短路径，便于 curl；主播页已改用 `manual-job` |
 | `POST` | `/api/rooms/:id/digital-human/speak` | 当前活跃任务 `image_done` 且仍有会话时，再 `SEND_TEXT` 一句 |
 | `GET` | `/api/rooms/:id/digital-human/active-job` | 轮询任务状态、`ivhVirtualmanUserId`、`ivhSessionId` 等 |
 

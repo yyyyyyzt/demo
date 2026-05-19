@@ -58,4 +58,13 @@ export default defineConfig({
       },
     },
   },
+  // 与 dev 一致：preview 时把 /api 转到本地 API，否则浏览器会请求静态站自身路径而得到 404
+  preview: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+      },
+    },
+  },
 })
