@@ -46,13 +46,10 @@
    不再走 TUILiveKit 的 `startLive`/`LiveView`，根因见下方「为什么改写」）。
 
 - **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；房间列表导航到主播 / 观众页。
-- **`/anchor/:roomId`**：**主播控制台 · 数字人直播测试** — 两步流程：① 点「主播开播」以 `anchor_*` 进入 TRTC
-  房间（仅监看，不推送本地摄像头）；② 点「发起数字人测试」调 `POST /api/rooms/:id/digital-human/manual-job`（与 `POST .../dh/start` 等价，后者为短路径别名），服务端通过
-  aPaaS（`createsession → startsession → SEND_TEXT`）让数智人作为另一路 TRTC 用户进同一 `liveId`。本页
-  通过 `trtc-sdk-v5` 监听 `REMOTE_VIDEO_AVAILABLE` 并自动渲染数字人画面。「停止数字人」会调用
-  `POST .../digital-human/stop-session`（与 `POST .../dh/stop` 相同）主动 `closesession`，释放并发。
-- **`/`**：**观众 H5** — 填 `liveId` + SDKAppID + 观众 `userId`，调 `POST /api/usersig` 取 UserSig 后用
-  `trtc-sdk-v5` 以 `audience` 角色进入同一字符串房间号，监听并渲染数字人远端视频。
+- **`/anchor/:roomId`**：**主播控制台 · 数字人直播测试** — ① 点「主播开播」以 `anchor_*` 进入 TRTC
+  房间；②「发起数字人测试」调 `POST .../digital-human/manual-job`；③ 自定义文案 / 模拟评论；④ **观众待审评论**：对观众 `POST .../audience/pending-comments` 的队列可选「公区显示」「送入数字人」（`POST .../digital-human/job-from-pending`）或「忽略」。「停止数字人」为
+  `POST .../digital-human/stop-session`。
+- **`/`**：**观众 H5** — 同 `liveId` 进 TRTC 看播；底部 **提交审核** 仅将评论写入服务端待审队列（不会立刻出现在公区），主持人「公区显示」后轮询展示在公区列表。
 - **`/anchor-canvas/:roomId`**：**Canvas 遗留推流**（隐藏 iframe 方案，仅调试）。
 - **`/legacy`**：历史调试页（点赞 + 腾讯观众 JSON 面板）。
 - **`/archive/playground`**：重定向到 `/legacy`。
