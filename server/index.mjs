@@ -122,8 +122,40 @@ app.post('/api/usersig', (req, res) => {
   }
 })
 
-app.get('/api/rooms', (_req, res) => {
+/** @type {Map<string, Array<{ id: string, text: string, senderLabel: string, createdAt: string }>>} */
+const pendingAudienceComments = new Map()
+/** @type {Map<string, Array<{ id: string, text: string, senderLabel: string, approvedAt: string }>>} */
+const publicAudienceMessages = new Map()
+const PENDING_AUDIENCE_MAX = 200
+const PUBLIC_AUDIENCE_MAX = 200
+
+function getPendingAudienceList(roomInternalId) {
+  return pendingAudienceComments.get(roomInternalId) || []
+}
+
+function takePendingAudienceById(roomInternalId, commentId) {
+  const list = pendingAudienceComments.get(roomInternalId)
+  if (!list?.length) return null
+  const idx = list.findIndex((x) => x.id === commentId)
+  if (idx === -1) return null
+  const [item] = list.splice(idx, 1)
+  if (!list.length) pendingAudienceComments.delete(roomInternalId)
+  else pendingAudienceComments.set(roomInternalId, list)
+  return item
+}
+
+app.get('/api/rooms', (req, res) => {
+  const liveId = String(req.query.liveId || '').trim()
   const rooms = loadRooms()
+  if (liveId) {
+    const room = rooms.find((r) => r.liveId === liveId)
+    if (!room) {
+      res.status(404).json({ error: '未找到该 liveId 对应的房间' })
+      return
+    }
+    res.json({ room })
+    return
+  }
   res.json({ rooms })
 })
 
@@ -150,6 +182,96 @@ app.get('/api/rooms/:id', (req, res) => {
     return
   }
   res.json(room)
+})
+
+/** 观众提交待审评论（不直接出现在公区；主播可选「公区显示」或「送入数字人」） */
+app.post('/api/rooms/:id/audience/pending-comments', (req, res) => {
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const text = String(req.body?.text || '').trim()
+  if (!text) {
+    res.status(400).json({ error: 'text 必填' })
+    return
+  }
+  const senderLabel = String(req.body?.sender_label || req.body?.sender || '观众').trim().slice(0, 64) || '观众'
+  const id = `aud_${uuidv4().replace(/-/g, '').slice(0, 16)}`
+  const item = {
+    id,
+    text: text.slice(0, 2000),
+    senderLabel,
+    createdAt: new Date().toISOString(),
+  }
+  const list = getPendingAudienceList(room.id)
+  list.unshift(item)
+  while (list.length > PENDING_AUDIENCE_MAX) list.pop()
+  pendingAudienceComments.set(room.id, list)
+  res.status(201).json(item)
+})
+
+app.get('/api/rooms/:id/audience/pending-comments', (req, res) => {
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  res.json({ items: getPendingAudienceList(room.id) })
+})
+
+app.delete('/api/rooms/:id/audience/pending-comments/:commentId', (req, res) => {
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const removed = takePendingAudienceById(room.id, req.params.commentId)
+  if (!removed) {
+    res.status(404).json({ error: '待审评论不存在或已处理' })
+    return
+  }
+  res.json({ ok: true, removed })
+})
+
+/** 主播：将待审移入公区列表（观众轮询可见；非 IM 群聊） */
+app.post('/api/rooms/:id/audience/pending-comments/:commentId/approve-display', (req, res) => {
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const item = takePendingAudienceById(room.id, req.params.commentId)
+  if (!item) {
+    res.status(404).json({ error: '待审评论不存在或已处理' })
+    return
+  }
+  const pubId = `pub_${uuidv4().replace(/-/g, '').slice(0, 16)}`
+  const pubItem = {
+    id: pubId,
+    text: item.text,
+    senderLabel: item.senderLabel,
+    approvedAt: new Date().toISOString(),
+  }
+  const pubList = publicAudienceMessages.get(room.id) || []
+  pubList.unshift(pubItem)
+  while (pubList.length > PUBLIC_AUDIENCE_MAX) pubList.pop()
+  publicAudienceMessages.set(room.id, pubList)
+  res.json({ ok: true, item: pubItem })
+})
+
+app.get('/api/rooms/:id/audience/public-messages', (req, res) => {
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  res.json({ items: publicAudienceMessages.get(room.id) || [] })
 })
 
 app.post('/api/rooms/:id/token', (req, res) => {
@@ -243,8 +365,8 @@ app.get('/api/rooms/:id/comments', (req, res) => {
   res.json({
     items: [],
     nextCursor: null,
-    source: 'im',
-    hint: '评论由 TUILiveKit 弹幕（腾讯云 IM）下发，请使用观众端发送、主播页「连接评论管理」查看。',
+    source: 'http_queue',
+    hint: '待审/公区评论走 REST：观众 POST .../audience/pending-comments；主播 GET 同路径拉取；公区 GET .../audience/public-messages。',
   })
 })
 
@@ -382,6 +504,55 @@ app.post('/api/rooms/:id/digital-human/manual-job', (req, res) => {
     commentId: `manual_${Date.now()}`,
     commentText,
     commentSource: 'manual_debug',
+    ivhUseChat: useChat,
+    status: 'pending',
+    replyText: null,
+    imageUrl: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  jobs.set(jobId, job)
+  roomActiveJob.set(room.id, jobId)
+  setImmediate(() => {
+    runDigitalHumanPipeline(job, room, {
+      genUserSig,
+      trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
+    }).catch((e) => {
+      job.status = 'failed'
+      job.ivhError = job.ivhError || e?.message || String(e)
+      job.updatedAt = new Date().toISOString()
+    })
+  })
+  res.status(201).json(job)
+})
+
+/** 主播从待审队列选中一条，排队数字人任务（服务端已持有权威文本，不依赖 presubmit_ticket） */
+app.post('/api/rooms/:id/digital-human/job-from-pending', (req, res) => {
+  const rooms = loadRooms()
+  const room = rooms.find((r) => r.id === req.params.id)
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const pendingId = String(req.body?.pending_comment_id || '').trim()
+  if (!pendingId) {
+    res.status(400).json({ error: 'pending_comment_id 必填' })
+    return
+  }
+  const item = takePendingAudienceById(room.id, pendingId)
+  if (!item) {
+    res.status(404).json({ error: '待审评论不存在或已被处理' })
+    return
+  }
+  const useChat = req.body?.use_chat === true || req.body?.use_chat === 'true'
+  const jobId = `job_${uuidv4().replace(/-/g, '').slice(0, 16)}`
+  const job = {
+    id: jobId,
+    roomId: room.id,
+    liveId: room.liveId,
+    commentId: item.id,
+    commentText: item.text,
+    commentSource: 'pending_queue',
     ivhUseChat: useChat,
     status: 'pending',
     replyText: null,

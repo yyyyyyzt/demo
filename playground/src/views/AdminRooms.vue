@@ -4,7 +4,7 @@
       <h1 class="admin__title">数字人直播 · 管理台</h1>
       <p class="admin__sub">
         最精简流程：1) 在此创建一个房间； 2) 进入「主播控制台」点「主播开播」→「发起数字人测试」；
-        3) 新开窗口打开「观众 H5」用同一 <code>liveId</code> 看播。主播页与观众页都用原生
+        3) 新开窗口打开「观众 H5」用同一 <code>liveId</code> 看播；观众「提交审核」的评论在主播页<strong>待审列表</strong>处理后再公区显示或送入数字人。主播页与观众页都用原生
         <code>trtc-sdk-v5</code> 订阅房间内远端视频，能直接看到数字人画面（不依赖 TUILiveKit 的 anchor 流概念）。
       </p>
       <nav class="admin__nav">

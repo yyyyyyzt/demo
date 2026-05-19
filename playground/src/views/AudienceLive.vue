@@ -6,6 +6,9 @@
         <p class="gate__hint">
           填入与主播相同的直播间 ID（即创建房间返回的 <code>liveId</code>），点击「进入直播间」后通过原生 TRTC SDK 直接订阅房间内任意远端视频流（含数字人）。
         </p>
+        <p class="gate__hint gate__hint--soft">
+          发送评论仅进入<strong>待审队列</strong>，不会在公区直接展示；主持人「公区显示」后，本页下方公区列表会出现该条。
+        </p>
 
         <label class="field">
           <span>直播间 ID（liveId）</span>
@@ -44,10 +47,46 @@
           </button>
         </header>
         <p v-if="trtcError" class="banner banner--err">{{ trtcError }}</p>
+        <p v-if="roomResolveError" class="banner banner--err">{{ roomResolveError }}</p>
         <div class="live-body">
           <div ref="stageRef" class="live-stage" />
           <p v-if="!hasRemoteVideo" class="live-overlay">等待主播或数字人画面…</p>
         </div>
+
+        <section class="comment-dock">
+          <h2 class="comment-dock__title">发送评论（先审后发）</h2>
+          <p class="comment-dock__hint">
+            提交后进入待审队列，由主播在控制台选择是否公区展示或送入数字人；此处<strong>不会</strong>立刻出现在下方公区。
+          </p>
+          <div class="comment-compose">
+            <textarea
+              v-model.trim="audienceCommentDraft"
+              class="comment-textarea"
+              rows="2"
+              maxlength="2000"
+              placeholder="输入想说的话…"
+              :disabled="!roomInternalId || commentSubmitting"
+            />
+            <button
+              type="button"
+              class="btn btn--primary comment-send"
+              :disabled="!roomInternalId || commentSubmitting || !audienceCommentDraft.trim()"
+              @click="submitPendingComment"
+            >
+              {{ commentSubmitting ? '提交中…' : '提交审核' }}
+            </button>
+          </div>
+          <p v-if="commentToast" class="comment-toast">{{ commentToast }}</p>
+
+          <h3 class="comment-dock__subtitle">公区（仅展示主播已「公区显示」的消息）</h3>
+          <ul class="public-list">
+            <li v-for="m in publicMessages" :key="m.id" class="public-row">
+              <span class="public-user">{{ m.senderLabel }}</span>
+              <span class="public-text">{{ m.text }}</span>
+            </li>
+          </ul>
+          <p v-if="!publicMessages.length" class="public-empty">暂无公区消息</p>
+        </section>
       </div>
     </template>
   </div>
@@ -80,12 +119,66 @@ const joinedLiveId = ref('')
 const busy = ref(false)
 const gateError = ref('')
 
+const roomInternalId = ref('')
+const roomResolveError = ref('')
+const audienceCommentDraft = ref('')
+const commentSubmitting = ref(false)
+const commentToast = ref('')
+const publicMessages = ref([])
+let publicPollTimer = null
+
 watch(
   () => route.query.liveId,
   (v) => {
     if (!joined.value && v != null) liveIdInput.value = String(v)
   },
 )
+
+async function resolveRoomInternalId(liveId) {
+  roomResolveError.value = ''
+  const r = await fetch(`/api/rooms?liveId=${encodeURIComponent(liveId)}`)
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(j.error || r.statusText)
+  if (!j.room?.id) throw new Error('接口未返回 room.id')
+  roomInternalId.value = j.room.id
+}
+
+async function pollPublicMessages() {
+  if (!roomInternalId.value) return
+  try {
+    const r = await fetch(`/api/rooms/${roomInternalId.value}/audience/public-messages`)
+    const j = await r.json()
+    if (r.ok) publicMessages.value = j.items || []
+  } catch {
+    /* noop */
+  }
+}
+
+async function submitPendingComment() {
+  if (!roomInternalId.value) return
+  const text = audienceCommentDraft.value.trim()
+  if (!text) return
+  commentSubmitting.value = true
+  commentToast.value = ''
+  try {
+    const r = await fetch(`/api/rooms/${roomInternalId.value}/audience/pending-comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, sender_label: guestUserId.value.trim() || '观众' }),
+    })
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || r.statusText)
+    audienceCommentDraft.value = ''
+    commentToast.value = '已提交审核，请等待主播处理。'
+    setTimeout(() => {
+      commentToast.value = ''
+    }, 4000)
+  } catch (e) {
+    commentToast.value = e?.message || String(e)
+  } finally {
+    commentSubmitting.value = false
+  }
+}
 
 async function doJoin() {
   gateError.value = ''
@@ -110,6 +203,8 @@ async function doJoin() {
     const sigJson = await sigRes.json().catch(() => ({}))
     if (!sigRes.ok) throw new Error(sigJson.error || sigRes.statusText)
 
+    await resolveRoomInternalId(liveId)
+
     joinedLiveId.value = liveId
     joined.value = true
     await router.replace({ path: '/', query: { ...route.query, liveId } })
@@ -121,10 +216,15 @@ async function doJoin() {
       strRoomId: liveId,
       role: 'audience',
     })
+
+    await pollPublicMessages()
+    publicPollTimer = setInterval(pollPublicMessages, 2500)
   } catch (e) {
     gateError.value = e?.message || String(e)
+    roomResolveError.value = roomInternalId.value ? '' : e?.message || String(e)
     joined.value = false
     joinedLiveId.value = ''
+    roomInternalId.value = ''
   } finally {
     busy.value = false
   }
@@ -132,16 +232,26 @@ async function doJoin() {
 
 async function doLeave() {
   busy.value = true
+  if (publicPollTimer) {
+    clearInterval(publicPollTimer)
+    publicPollTimer = null
+  }
   try {
     await exitRoom()
     joined.value = false
     joinedLiveId.value = ''
+    roomInternalId.value = ''
+    publicMessages.value = []
+    audienceCommentDraft.value = ''
+    commentToast.value = ''
+    roomResolveError.value = ''
   } finally {
     busy.value = false
   }
 }
 
 onUnmounted(() => {
+  if (publicPollTimer) clearInterval(publicPollTimer)
   if (joined.value) exitRoom().catch(() => {})
 })
 </script>
@@ -169,6 +279,11 @@ onUnmounted(() => {
   font-size: 0.88rem;
   line-height: 1.55;
   color: rgba(255, 255, 255, 0.72);
+}
+
+.gate__hint--soft {
+  color: rgba(255, 210, 160, 0.92);
+  font-size: 0.82rem;
 }
 
 .gate__hint code {
@@ -260,8 +375,8 @@ onUnmounted(() => {
 .live-shell {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
-  height: 100vh;
+  min-height: 100dvh;
+  min-height: 100vh;
   background: #000;
 }
 
@@ -304,6 +419,7 @@ onUnmounted(() => {
   position: relative;
   flex: 1;
   min-height: 0;
+  min-height: min(42vh, 320px);
   display: flex;
   flex-direction: column;
 }
@@ -325,6 +441,112 @@ onUnmounted(() => {
   pointer-events: none;
   font-size: 0.95rem;
   color: rgba(255, 255, 255, 0.55);
+}
+
+.comment-dock {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(12, 14, 22, 0.98);
+  padding: 12px 14px max(16px, env(safe-area-inset-bottom));
+  max-height: 48vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.comment-dock__title {
+  margin: 0 0 6px;
+  font-size: 0.92rem;
+}
+
+.comment-dock__subtitle {
+  margin: 12px 0 6px;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.comment-dock__hint {
+  margin: 0 0 10px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.comment-compose {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.comment-textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 0.88rem;
+  resize: none;
+}
+
+.comment-textarea:focus {
+  outline: none;
+  border-color: rgba(126, 184, 255, 0.55);
+}
+
+.comment-send {
+  flex: 0 0 auto;
+  width: auto;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.comment-toast {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: rgba(160, 230, 180, 0.95);
+}
+
+.public-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.public-row {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.public-user {
+  flex: 0 0 auto;
+  max-width: 32%;
+  color: rgba(180, 220, 255, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.public-text {
+  flex: 1;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.88);
+  word-break: break-word;
+}
+
+.public-empty {
+  margin: 0;
+  padding: 8px 0;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.4);
 }
 </style>
 

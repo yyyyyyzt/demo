@@ -88,6 +88,49 @@
         <p v-if="simulateHint" class="muted small">{{ simulateHint }}</p>
       </section>
 
+      <section class="panel panel--pending">
+        <h2 class="panel__title">④ 观众待审评论</h2>
+        <p class="hint">
+          观众在 H5 页点击「提交审核」后，消息只进入此处队列，<strong>不会自动驱动数字人</strong>。你可选择<strong>公区显示</strong>（观众端公区列表可见）、<strong>送入数字人</strong>（排队
+          aPaaS 任务）或<strong>忽略</strong>。
+        </p>
+        <label class="sim-check pending-dh-chat">
+          <input v-model="pendingDhUseChat" type="checkbox" />
+          <span>送入数字人时使用对话模式（<code>use_chat</code>）</span>
+        </label>
+        <p v-if="!pendingComments.length" class="muted small">暂无待审；请观众在观众页提交评论。</p>
+        <ul v-else class="pending-list">
+          <li v-for="p in pendingComments" :key="p.id" class="pending-row">
+            <div class="pending-main">
+              <span class="pending-user">{{ p.senderLabel }}</span>
+              <span class="pending-text">{{ p.text }}</span>
+              <span class="pending-time">{{ formatShortTime(p.createdAt) }}</span>
+            </div>
+            <div class="pending-actions">
+              <button
+                type="button"
+                class="btn btn--sm"
+                :disabled="!!pendingActionKey"
+                @click="onPendingApproveDisplay(p)"
+              >
+                {{ pendingActionKey === `${p.id}-pub` ? '…' : '公区显示' }}
+              </button>
+              <button
+                type="button"
+                class="btn btn--sm btn--primary"
+                :disabled="!!pendingActionKey || !trtcEntered || dhStarting"
+                @click="onPendingToDh(p)"
+              >
+                {{ pendingActionKey === `${p.id}-dh` ? '…' : '送入数字人' }}
+              </button>
+              <button type="button" class="btn btn--sm btn--ghost" :disabled="!!pendingActionKey" @click="onPendingDismiss(p)">
+                {{ pendingActionKey === `${p.id}-del` ? '…' : '忽略' }}
+              </button>
+            </div>
+          </li>
+        </ul>
+      </section>
+
       <section class="panel panel--stage">
         <h2 class="panel__title">直播画面（管理员预览）</h2>
         <p class="hint hint--soft">
@@ -181,6 +224,10 @@ const simulateUseChat = ref(false)
 const simulateSending = ref(false)
 const simulateHint = ref('')
 
+const pendingComments = ref([])
+const pendingActionKey = ref('')
+const pendingDhUseChat = ref(false)
+
 const apiHealth = ref(null)
 let pollTimer = null
 let healthTimer = null
@@ -209,6 +256,16 @@ const audienceUrl = computed(() => {
   url.searchParams.set('liveId', room.value.liveId)
   return url.toString()
 })
+
+function formatShortTime(iso) {
+  if (!iso) return ''
+  try {
+    const d = new Date(iso)
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+  } catch {
+    return iso
+  }
+}
 
 async function refreshApiHealth() {
   try {
@@ -367,17 +424,95 @@ async function pollDh() {
   }
 }
 
+async function pollPending() {
+  if (!room.value) return
+  try {
+    const r = await fetch(`/api/rooms/${room.value.id}/audience/pending-comments`)
+    const j = await r.json()
+    if (r.ok) pendingComments.value = j.items || []
+  } catch {
+    /* noop */
+  }
+}
+
+async function pollRoomQueues() {
+  await pollDh()
+  await pollPending()
+}
+
+async function onPendingApproveDisplay(item) {
+  if (!room.value) return
+  const k = `${item.id}-pub`
+  pendingActionKey.value = k
+  dhError.value = ''
+  try {
+    const r = await fetch(
+      `/api/rooms/${room.value.id}/audience/pending-comments/${encodeURIComponent(item.id)}/approve-display`,
+      { method: 'POST' },
+    )
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || r.statusText)
+    await pollPending()
+  } catch (e) {
+    dhError.value = e?.message || String(e)
+  } finally {
+    pendingActionKey.value = ''
+  }
+}
+
+async function onPendingToDh(item) {
+  if (!room.value) return
+  const k = `${item.id}-dh`
+  pendingActionKey.value = k
+  dhError.value = ''
+  try {
+    const r = await fetch(`/api/rooms/${room.value.id}/digital-human/job-from-pending`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pending_comment_id: item.id, use_chat: pendingDhUseChat.value }),
+    })
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || r.statusText)
+    dhJob.value = j
+    await pollPending()
+  } catch (e) {
+    dhError.value = e?.message || String(e)
+  } finally {
+    pendingActionKey.value = ''
+  }
+}
+
+async function onPendingDismiss(item) {
+  if (!room.value) return
+  const k = `${item.id}-del`
+  pendingActionKey.value = k
+  dhError.value = ''
+  try {
+    const r = await fetch(`/api/rooms/${room.value.id}/audience/pending-comments/${encodeURIComponent(item.id)}`, {
+      method: 'DELETE',
+    })
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || r.statusText)
+    await pollPending()
+  } catch (e) {
+    dhError.value = e?.message || String(e)
+  } finally {
+    pendingActionKey.value = ''
+  }
+}
+
 watch(roomId, async () => {
   if (trtcEntered.value) await exitRoom()
   dhJob.value = null
   simulateHint.value = ''
+  pendingComments.value = []
   await loadRoom()
 })
 
 onMounted(() => {
   loadRoom()
   refreshApiHealth()
-  pollTimer = setInterval(pollDh, 2000)
+  pollTimer = setInterval(pollRoomQueues, 2000)
   healthTimer = setInterval(refreshApiHealth, 12000)
 })
 
@@ -564,6 +699,78 @@ onUnmounted(async () => {
 .btn--primary {
   border-color: transparent;
   background: linear-gradient(135deg, #4f8dff 0%, #7e5bff 100%);
+}
+
+.btn--sm {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+}
+
+.btn--ghost {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.panel--pending {
+  border-color: rgba(255, 200, 120, 0.28);
+  background: rgba(36, 28, 0, 0.2);
+}
+
+.pending-dh-chat {
+  margin-bottom: 12px;
+}
+
+.pending-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 42vh;
+  overflow-y: auto;
+}
+
+.pending-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pending-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.84rem;
+}
+
+.pending-user {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: rgba(180, 220, 255, 0.95);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-text {
+  flex: 1 1 100%;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.92);
+  word-break: break-word;
+}
+
+.pending-time {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.pending-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .btn:disabled {
