@@ -17,6 +17,7 @@
         <p class="hint">
           1）<strong>主播开播</strong>：以 <code>anchor_*</code> 用户身份进入 TRTC 直播间，仅作为「监看 / 占位主播」，不推送本地摄像头。<br />
           2）<strong>发起数字人测试</strong>：调用服务端 aPaaS（<code>createsession → startsession → SEND_TEXT</code>）让数智人以另一名 TRTC 用户身份进入同一房间推流。<br />
+          3）<strong>模拟观众评论</strong>：在下方输入自定义文案，可替代步骤 ② 的默认首句，或在数字人已就绪后<strong>追加多轮</strong>驱动（类似评论触发）。<br />
           页面通过原生 <code>trtc-sdk-v5</code> 订阅房间内任意远端视频流（<code>REMOTE_VIDEO_AVAILABLE</code>），<strong>因此能直接看到数字人画面</strong>；观众端同理。
         </p>
 
@@ -49,6 +50,42 @@
 
         <p v-if="trtcError" class="err">{{ trtcError }}</p>
         <p v-if="dhError" class="err">{{ dhError }}</p>
+      </section>
+
+      <section class="panel panel--simulate">
+        <h2 class="panel__title">③ 模拟观众评论 → 驱动数字人</h2>
+        <p class="hint">
+          请先完成<strong>① 主播开播</strong>。若尚未发起数字人，可直接用下方文案作为<strong>首条</strong>进房播报；若步骤 ② 已就绪（任务状态为
+          <code>image_done</code>），同一文案会走<strong>追加一轮</strong>（<code>speak</code>）。勾选「对话模式」时走云端会话（<code>use_chat</code>），不勾选则按原文 TTS。
+        </p>
+        <p v-if="apiHealth && apiHealth.dhAllowManualJob === false" class="hint hint--soft">
+          当前 API 已关闭手动调试（<code>DH_ALLOW_MANUAL_JOB=0</code>），本节请求将失败；请改环境变量并重启 API。
+        </p>
+        <label class="sim-field">
+          <span class="sim-label">模拟用户评论 / 弹幕内容</span>
+          <textarea
+            v-model.trim="simulateCommentText"
+            class="sim-textarea"
+            rows="3"
+            maxlength="2000"
+            placeholder="例如：主播你好，请问今天有什么福利？"
+          />
+        </label>
+        <label class="sim-check">
+          <input v-model="simulateUseChat" type="checkbox" />
+          <span>对话模式（云端扩展回复；不勾选则数字人朗读/播报输入原文）</span>
+        </label>
+        <div class="actions">
+          <button
+            type="button"
+            class="btn btn--primary"
+            :disabled="!trtcEntered || simulateSending || !simulateCommentText.trim() || apiHealth?.dhAllowManualJob === false"
+            @click="onSimulateComment"
+          >
+            {{ simulateSending ? '提交中…' : '发送模拟评论并驱动数字人' }}
+          </button>
+        </div>
+        <p v-if="simulateHint" class="muted small">{{ simulateHint }}</p>
       </section>
 
       <section class="panel panel--stage">
@@ -138,6 +175,12 @@ const dhJob = ref(null)
 /** 与 server `dh/start` 默认文案一致；走 `digital-human/manual-job` 以兼容仅代理到旧版 API 或 preview 未配置时的路径习惯 */
 const DH_DEFAULT_SCRIPT =
   '欢迎来到直播间，我是数字人主播，下面为大家带来一段精彩的直播测试。'
+
+const simulateCommentText = ref('主播你好，今天直播间有什么看点？')
+const simulateUseChat = ref(false)
+const simulateSending = ref(false)
+const simulateHint = ref('')
+
 const apiHealth = ref(null)
 let pollTimer = null
 let healthTimer = null
@@ -148,6 +191,15 @@ const dhJobActive = computed(() =>
       ['pending', 'llm_done', 'image_done'].includes(dhJob.value.status) &&
       !dhJob.value.ivhClosed,
   ),
+)
+
+const canAppendSpeak = computed(
+  () =>
+    Boolean(
+      dhJob.value?.status === 'image_done' &&
+        dhJob.value?.ivhSessionId &&
+        !dhJob.value?.ivhClosed,
+    ),
 )
 
 const audienceUrl = computed(() => {
@@ -252,10 +304,54 @@ async function onStopDh() {
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
     if (j.job) dhJob.value = j.job
+    simulateHint.value = ''
   } catch (e) {
     dhError.value = e?.message || String(e)
   } finally {
     dhStopping.value = false
+  }
+}
+
+/** 无活跃会话时走 manual-job；已就绪则 speak 追加一轮 */
+async function onSimulateComment() {
+  if (!room.value || !trtcEntered.value) return
+  const text = simulateCommentText.value.trim()
+  if (!text) {
+    dhError.value = '请输入模拟评论内容。'
+    return
+  }
+  simulateSending.value = true
+  dhError.value = ''
+  simulateHint.value = ''
+  try {
+    if (canAppendSpeak.value) {
+      const r = await fetch(`/api/rooms/${room.value.id}/digital-human/speak`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, use_chat: simulateUseChat.value }),
+      })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || r.statusText)
+      dhJob.value = j.job
+      simulateHint.value = '已追加一轮驱动（同一会话 speak）。'
+    } else if (!dhJobActive.value) {
+      const r = await fetch(`/api/rooms/${room.value.id}/digital-human/manual-job`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, use_chat: simulateUseChat.value }),
+      })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || r.statusText)
+      dhJob.value = j
+      simulateHint.value = '已用当前文案创建首条数字人任务。就绪后可继续发送模拟评论追加。'
+    } else {
+      dhError.value =
+        '当前数字人任务仍在执行中，请待状态变为 image_done 后再发送模拟评论；或使用「停止数字人」后重新发起。'
+    }
+  } catch (e) {
+    dhError.value = e?.message || String(e)
+  } finally {
+    simulateSending.value = false
   }
 }
 
@@ -274,6 +370,7 @@ async function pollDh() {
 watch(roomId, async () => {
   if (trtcEntered.value) await exitRoom()
   dhJob.value = null
+  simulateHint.value = ''
   await loadRoom()
 })
 
@@ -361,6 +458,58 @@ onUnmounted(async () => {
 .panel--job {
   border-color: rgba(120, 200, 255, 0.28);
   background: rgba(0, 24, 40, 0.22);
+}
+
+.panel--simulate {
+  border-color: rgba(200, 160, 255, 0.28);
+  background: rgba(28, 0, 40, 0.18);
+}
+
+.sim-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.sim-label {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.sim-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 4.2rem;
+}
+
+.sim-textarea:focus {
+  outline: none;
+  border-color: rgba(200, 160, 255, 0.55);
+}
+
+.sim-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.68);
+  cursor: pointer;
+}
+
+.sim-check input {
+  margin-top: 3px;
+  flex: 0 0 auto;
 }
 
 .panel--share {
