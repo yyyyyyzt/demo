@@ -1,16 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AdminRooms from '../views/AdminRooms.vue'
 import AnchorBroadcast from '../views/AnchorBroadcast.vue'
-import AnchorCanvasLegacy from '../views/AnchorCanvasLegacy.vue'
-import AudienceLive from '../views/AudienceLive.vue'
-import LegacyPlayground from '../views/LegacyPlayground.vue'
+import MonitorPlaceholder from '../views/MonitorPlaceholder.vue'
 
 export const routes = [
   {
     path: '/',
-    name: 'audience',
-    component: AudienceLive,
-    meta: { title: '观众端' },
+    redirect: '/admin',
   },
   {
     path: '/admin',
@@ -19,26 +15,28 @@ export const routes = [
     meta: { title: '管理台' },
   },
   {
-    path: '/anchor/:roomId',
-    name: 'anchor-broadcast',
+    path: '/studio/:roomId',
+    name: 'studio-broadcast',
     component: AnchorBroadcast,
-    meta: { title: '主播控制台' },
+    meta: { title: '播控台' },
   },
   {
-    path: '/anchor-canvas/:roomId',
-    name: 'anchor-canvas-legacy',
-    component: AnchorCanvasLegacy,
-    meta: { title: 'Canvas 遗留推流' },
+    path: '/monitor/:roomId',
+    name: 'monitor-live',
+    component: MonitorPlaceholder,
+    meta: { title: '监控' },
+  },
+  {
+    path: '/anchor/:roomId',
+    redirect: (to) => ({ path: `/studio/${to.params.roomId}` }),
   },
   {
     path: '/legacy',
-    name: 'legacy-playground',
-    component: LegacyPlayground,
-    meta: { title: '历史调试页' },
+    redirect: '/admin',
   },
   {
     path: '/archive/playground',
-    redirect: '/legacy',
+    redirect: '/admin',
   },
 ]
 
@@ -49,7 +47,7 @@ const router = createRouter({
 
 router.afterEach((to) => {
   const title = to.meta?.title
-  document.title = title ? `${title} · Live Demo` : 'Live Demo'
+  document.title = title ? `${title} · 数字人直播 Demo` : '数字人直播 Demo'
 })
 
 export default router

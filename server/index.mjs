@@ -1,6 +1,6 @@
 /**
- * Demo REST API：直播间、UserSig、IM 弹幕（先审后代发）、数字人任务（IVH / 占位）、评论 presubmit。
- * 生产环境请替换存储与鉴权；密钥仅通过环境变量注入。
+ * 交付 Demo REST API：直播间、UserSig、数智人播控（studio/*）。
+ * 历史 IM / presubmit / 观众待审等见 server/archive/legacyRoutes.mjs（ARCHIVE_LEGACY=1）。
  */
 import 'dotenv/config'
 import cors from 'cors'
@@ -10,9 +10,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
-import { getIvhEnvDiagnostics, ivhSendText } from './ivhApaas.mjs'
-import { imSendGroupTextAsUser } from './imRest.mjs'
-import { closeRoomIvhSession, runDigitalHumanPipeline } from './ivhPipeline.mjs'
+import { getIvhEnvDiagnostics } from './ivhApaas.mjs'
+import { closeRoomIvhSession } from './ivhPipeline.mjs'
 
 const require = createRequire(import.meta.url)
 const { Api: TLSSigApi } = require('tls-sig-api-v2')
@@ -22,6 +21,7 @@ const DATA_DIR = path.join(__dirname, 'data')
 const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json')
 
 const PORT = Number(process.env.API_PORT || process.env.PORT || 3001)
+const ARCHIVE_LEGACY = process.env.ARCHIVE_LEGACY === '1'
 
 const TRTC_SDK_APP_ID = process.env.TRTC_SDK_APP_ID
 const TRTC_SECRET_KEY = process.env.TRTC_SECRET_KEY
@@ -38,14 +38,19 @@ const jobs = new Map()
 /** room internal id -> latest job id */
 const roomActiveJob = new Map()
 
-/** 数字人任务：评论正文服务端暂存（一次性 ticket），避免仅信任浏览器 body 中的 comment_text */
 const PRESUBMIT_TTL_MS = 15 * 60 * 1000
 /** @type {Map<string, { roomId: string, commentId: string, text: string, expires: number }>} */
 const presubmitByTicket = new Map()
 
 const DH_JOB_REQUIRE_TICKET = process.env.DH_JOB_REQUIRE_TICKET === '1'
-/** 手动调试：POST .../manual-job、.../speak；生产可设 DH_ALLOW_MANUAL_JOB=0 */
 const DH_ALLOW_MANUAL_JOB = process.env.DH_ALLOW_MANUAL_JOB !== '0'
+
+/** @type {Map<string, Array<object>>} */
+const pendingAudienceComments = new Map()
+/** @type {Map<string, Array<object>>} */
+const publicAudienceMessages = new Map()
+const PENDING_AUDIENCE_MAX = 200
+const PUBLIC_AUDIENCE_MAX = 200
 
 function ensureDataDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -76,6 +81,21 @@ function genUserSig(userId, expireSec = 86400) {
   return api.genSig(userId, expireSec)
 }
 
+function getPendingAudienceList(roomInternalId) {
+  return pendingAudienceComments.get(roomInternalId) || []
+}
+
+function takePendingAudienceById(roomInternalId, commentId) {
+  const list = pendingAudienceComments.get(roomInternalId)
+  if (!list?.length) return null
+  const idx = list.findIndex((x) => x.id === commentId)
+  if (idx === -1) return null
+  const [item] = list.splice(idx, 1)
+  if (!list.length) pendingAudienceComments.delete(roomInternalId)
+  else pendingAudienceComments.set(roomInternalId, list)
+  return item
+}
+
 const app = express()
 app.use(
   cors({
@@ -92,12 +112,9 @@ app.get('/api/health', (_req, res) => {
     hasTrtcSecret: Boolean(TRTC_SDK_APP_ID && TRTC_SECRET_KEY),
     ivhConfigured: ivh.configured,
     ivhMissingEnvKeys: ivh.missingEnvKeys,
-    ivhEnvFileHint: '在仓库根目录复制 .env.example 为 .env，填写 IVH_* 后重启 API 进程',
-    ivhDocsSigning: 'https://cloud.tencent.com/document/product/1240/107197',
-    ivhConsoleKeys: 'https://xiaowei.cloud.tencent.com/ivh#/asserts_management',
-    dhJobRequireTicket: DH_JOB_REQUIRE_TICKET,
-    dhAllowManualJob: DH_ALLOW_MANUAL_JOB,
-    imApprovePublishConfigured: Boolean(TRTC_SDK_APP_ID && TRTC_SECRET_KEY && IM_REST_ADMIN_USER_ID),
+    archiveLegacyEnabled: ARCHIVE_LEGACY,
+    deliveryDemo: true,
+    studioApi: true,
   })
 })
 
@@ -122,28 +139,6 @@ app.post('/api/usersig', (req, res) => {
   }
 })
 
-/** @type {Map<string, Array<{ id: string, text: string, senderLabel: string, createdAt: string }>>} */
-const pendingAudienceComments = new Map()
-/** @type {Map<string, Array<{ id: string, text: string, senderLabel: string, approvedAt: string }>>} */
-const publicAudienceMessages = new Map()
-const PENDING_AUDIENCE_MAX = 200
-const PUBLIC_AUDIENCE_MAX = 200
-
-function getPendingAudienceList(roomInternalId) {
-  return pendingAudienceComments.get(roomInternalId) || []
-}
-
-function takePendingAudienceById(roomInternalId, commentId) {
-  const list = pendingAudienceComments.get(roomInternalId)
-  if (!list?.length) return null
-  const idx = list.findIndex((x) => x.id === commentId)
-  if (idx === -1) return null
-  const [item] = list.splice(idx, 1)
-  if (!list.length) pendingAudienceComments.delete(roomInternalId)
-  else pendingAudienceComments.set(roomInternalId, list)
-  return item
-}
-
 app.get('/api/rooms', (req, res) => {
   const liveId = String(req.query.liveId || '').trim()
   const rooms = loadRooms()
@@ -166,6 +161,7 @@ app.post('/api/rooms', (req, res) => {
     id: uuidv4(),
     liveId,
     title,
+    broadcastStatus: 'idle',
     createdAt: new Date().toISOString(),
   }
   const rooms = loadRooms()
@@ -184,96 +180,6 @@ app.get('/api/rooms/:id', (req, res) => {
   res.json(room)
 })
 
-/** 观众提交待审评论（不直接出现在公区；主播可选「公区显示」或「送入数字人」） */
-app.post('/api/rooms/:id/audience/pending-comments', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const text = String(req.body?.text || '').trim()
-  if (!text) {
-    res.status(400).json({ error: 'text 必填' })
-    return
-  }
-  const senderLabel = String(req.body?.sender_label || req.body?.sender || '观众').trim().slice(0, 64) || '观众'
-  const id = `aud_${uuidv4().replace(/-/g, '').slice(0, 16)}`
-  const item = {
-    id,
-    text: text.slice(0, 2000),
-    senderLabel,
-    createdAt: new Date().toISOString(),
-  }
-  const list = getPendingAudienceList(room.id)
-  list.unshift(item)
-  while (list.length > PENDING_AUDIENCE_MAX) list.pop()
-  pendingAudienceComments.set(room.id, list)
-  res.status(201).json(item)
-})
-
-app.get('/api/rooms/:id/audience/pending-comments', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  res.json({ items: getPendingAudienceList(room.id) })
-})
-
-app.delete('/api/rooms/:id/audience/pending-comments/:commentId', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const removed = takePendingAudienceById(room.id, req.params.commentId)
-  if (!removed) {
-    res.status(404).json({ error: '待审评论不存在或已处理' })
-    return
-  }
-  res.json({ ok: true, removed })
-})
-
-/** 主播：将待审移入公区列表（观众轮询可见；非 IM 群聊） */
-app.post('/api/rooms/:id/audience/pending-comments/:commentId/approve-display', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const item = takePendingAudienceById(room.id, req.params.commentId)
-  if (!item) {
-    res.status(404).json({ error: '待审评论不存在或已处理' })
-    return
-  }
-  const pubId = `pub_${uuidv4().replace(/-/g, '').slice(0, 16)}`
-  const pubItem = {
-    id: pubId,
-    text: item.text,
-    senderLabel: item.senderLabel,
-    approvedAt: new Date().toISOString(),
-  }
-  const pubList = publicAudienceMessages.get(room.id) || []
-  pubList.unshift(pubItem)
-  while (pubList.length > PUBLIC_AUDIENCE_MAX) pubList.pop()
-  publicAudienceMessages.set(room.id, pubList)
-  res.json({ ok: true, item: pubItem })
-})
-
-app.get('/api/rooms/:id/audience/public-messages', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  res.json({ items: publicAudienceMessages.get(room.id) || [] })
-})
-
 app.post('/api/rooms/:id/token', (req, res) => {
   try {
     const rooms = loadRooms()
@@ -284,7 +190,13 @@ app.post('/api/rooms/:id/token', (req, res) => {
     }
     const roleRaw = String(req.body?.role || 'audience')
     const role =
-      roleRaw === 'anchor' ? 'anchor' : roleRaw === 'moderator' ? 'moderator' : 'audience'
+      roleRaw === 'anchor'
+        ? 'anchor'
+        : roleRaw === 'moderator'
+          ? 'moderator'
+          : roleRaw === 'monitor'
+            ? 'monitor'
+            : 'audience'
 
     const safeLiveKey = String(room.liveId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 36)
 
@@ -292,6 +204,7 @@ app.post('/api/rooms/:id/token', (req, res) => {
     if (!userId) {
       if (role === 'anchor') userId = `anchor_${safeLiveKey}`.slice(0, 48)
       else if (role === 'moderator') userId = `mod_${safeLiveKey}`.slice(0, 48)
+      else if (role === 'monitor') userId = `monitor_${uuidv4().replace(/-/g, '').slice(0, 8)}`
       else userId = `viewer_${uuidv4().replace(/-/g, '').slice(0, 12)}`
     }
     const expire = Math.min(Math.max(Number(req.body?.expire) || 86400, 300), 86400 * 30)
@@ -311,369 +224,6 @@ app.post('/api/rooms/:id/token', (req, res) => {
   }
 })
 
-app.post('/api/rooms/:id/barrage/approve-publish', async (req, res) => {
-  try {
-    if (!IM_REST_ADMIN_USER_ID) {
-      res.status(503).json({
-        error:
-          '未配置 IM_REST_ADMIN_USER_ID。请在 IM 控制台创建 App 管理员账号，并在 .env 中填写该 userId（与 TRTC 同 SDKAppID 下签发 UserSig）。',
-      })
-      return
-    }
-    const rooms = loadRooms()
-    const room = rooms.find((r) => r.id === req.params.id)
-    if (!room) {
-      res.status(404).json({ error: '房间不存在' })
-      return
-    }
-    const sequence = Number(req.body?.sequence)
-    const timestampInSecond = Number(req.body?.timestamp_in_second)
-    const senderUserId = String(req.body?.sender_user_id || '').trim()
-    const text = String(req.body?.text || '').trim()
-    if (!Number.isFinite(sequence) || !Number.isFinite(timestampInSecond) || !senderUserId || !text) {
-      res.status(400).json({ error: 'sequence、timestamp_in_second、sender_user_id、text 必填' })
-      return
-    }
-    const groupId = imGroupIdForRoom(room)
-    await imSendGroupTextAsUser({
-      sdkAppId: TRTC_SDK_APP_ID,
-      secretKey: TRTC_SECRET_KEY,
-      adminUserId: IM_REST_ADMIN_USER_ID,
-      groupId,
-      fromAccount: senderUserId,
-      text: text.slice(0, 2000),
-      cloudCustomData: {
-        audit: 'public',
-        srcSequence: sequence,
-        srcTimestamp: timestampInSecond,
-      },
-    })
-    res.json({ ok: true, groupId })
-  } catch (e) {
-    const code = e.statusCode || 500
-    res.status(code).json({ error: e.message || String(e), imCode: e.imCode })
-  }
-})
-
-app.get('/api/rooms/:id/comments', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  res.json({
-    items: [],
-    nextCursor: null,
-    source: 'http_queue',
-    hint: '待审/公区评论走 REST：观众 POST .../audience/pending-comments；主播 GET 同路径拉取；公区 GET .../audience/public-messages。',
-  })
-})
-
-app.post('/api/rooms/:id/digital-human/comment-presubmit', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const sequence = Number(req.body?.sequence)
-  const timestampInSecond = Number(req.body?.timestamp_in_second)
-  const senderUserId = String(req.body?.sender_user_id || '').trim()
-  const text = String(req.body?.text || '').trim()
-  if (!Number.isFinite(sequence) || !Number.isFinite(timestampInSecond) || !senderUserId || !text) {
-    res
-      .status(400)
-      .json({ error: 'sequence、timestamp_in_second、sender_user_id、text 必填且为合法数值/非空字符串' })
-    return
-  }
-  const now = Date.now()
-  if (presubmitByTicket.size > 400) {
-    for (const [k, v] of presubmitByTicket) {
-      if (v.expires < now) presubmitByTicket.delete(k)
-    }
-  }
-  const commentId = `im_${sequence}_${senderUserId}_${timestampInSecond}`
-  const ticket = `pre_${uuidv4().replace(/-/g, '')}`
-  presubmitByTicket.set(ticket, {
-    roomId: room.id,
-    commentId,
-    text: text.slice(0, 2000),
-    expires: Date.now() + PRESUBMIT_TTL_MS,
-  })
-  res.status(201).json({
-    ticket,
-    comment_id: commentId,
-    expires_in_ms: PRESUBMIT_TTL_MS,
-  })
-})
-
-app.post('/api/rooms/:id/digital-human/jobs', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const presubmitTicket = String(req.body?.presubmit_ticket || '').trim()
-  let commentId = ''
-  let commentText = ''
-  let commentSource = 'client_body'
-
-  if (presubmitTicket) {
-    const rec = presubmitByTicket.get(presubmitTicket)
-    if (!rec || rec.roomId !== room.id) {
-      res.status(400).json({ error: 'presubmit_ticket 无效' })
-      return
-    }
-    if (rec.expires < Date.now()) {
-      presubmitByTicket.delete(presubmitTicket)
-      res.status(400).json({ error: 'presubmit_ticket 已过期，请重新在控制台预提交' })
-      return
-    }
-    presubmitByTicket.delete(presubmitTicket)
-    commentId = rec.commentId
-    commentText = rec.text
-    commentSource = 'presubmit'
-  } else if (DH_JOB_REQUIRE_TICKET) {
-    res.status(403).json({
-      error: '已启用 DH_JOB_REQUIRE_TICKET=1，必须先调用 POST .../comment-presubmit 再携带 presubmit_ticket 创建任务',
-    })
-    return
-  } else {
-    commentId = String(req.body?.comment_id || '').trim()
-    commentText = String(req.body?.comment_text || '').trim()
-    if (!commentId || !commentText) {
-      res.status(400).json({ error: '请提供 presubmit_ticket，或（开发模式）同时提供 comment_id 与 comment_text' })
-      return
-    }
-  }
-
-  const jobId = `job_${uuidv4().replace(/-/g, '').slice(0, 16)}`
-  const job = {
-    id: jobId,
-    roomId: room.id,
-    liveId: room.liveId,
-    commentId,
-    commentText,
-    commentSource,
-    status: 'pending',
-    replyText: null,
-    imageUrl: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
-  jobs.set(jobId, job)
-  roomActiveJob.set(room.id, jobId)
-  setImmediate(() => {
-    runDigitalHumanPipeline(job, room, {
-      genUserSig,
-      trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
-    }).catch((e) => {
-      job.status = 'failed'
-      job.ivhError = job.ivhError || e?.message || String(e)
-      job.updatedAt = new Date().toISOString()
-    })
-  })
-  res.status(201).json(job)
-})
-
-/** 不经过评论 presubmit，直接排队一条数字人任务（学习/联调用；默认开启） */
-app.post('/api/rooms/:id/digital-human/manual-job', (req, res) => {
-  if (!DH_ALLOW_MANUAL_JOB) {
-    res.status(403).json({ error: 'DH_ALLOW_MANUAL_JOB=0 已关闭手动调试接口' })
-    return
-  }
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const commentText = String(req.body?.text || '').trim()
-  if (!commentText) {
-    res.status(400).json({ error: 'text 必填' })
-    return
-  }
-  const useChat = req.body?.use_chat === true || req.body?.use_chat === 'true'
-  const jobId = `job_${uuidv4().replace(/-/g, '').slice(0, 16)}`
-  const job = {
-    id: jobId,
-    roomId: room.id,
-    liveId: room.liveId,
-    commentId: `manual_${Date.now()}`,
-    commentText,
-    commentSource: 'manual_debug',
-    ivhUseChat: useChat,
-    status: 'pending',
-    replyText: null,
-    imageUrl: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
-  jobs.set(jobId, job)
-  roomActiveJob.set(room.id, jobId)
-  setImmediate(() => {
-    runDigitalHumanPipeline(job, room, {
-      genUserSig,
-      trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
-    }).catch((e) => {
-      job.status = 'failed'
-      job.ivhError = job.ivhError || e?.message || String(e)
-      job.updatedAt = new Date().toISOString()
-    })
-  })
-  res.status(201).json(job)
-})
-
-/** 主播从待审队列选中一条，排队数字人任务（服务端已持有权威文本，不依赖 presubmit_ticket） */
-app.post('/api/rooms/:id/digital-human/job-from-pending', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const pendingId = String(req.body?.pending_comment_id || '').trim()
-  if (!pendingId) {
-    res.status(400).json({ error: 'pending_comment_id 必填' })
-    return
-  }
-  const item = takePendingAudienceById(room.id, pendingId)
-  if (!item) {
-    res.status(404).json({ error: '待审评论不存在或已被处理' })
-    return
-  }
-  const useChat = req.body?.use_chat === true || req.body?.use_chat === 'true'
-  const jobId = `job_${uuidv4().replace(/-/g, '').slice(0, 16)}`
-  const job = {
-    id: jobId,
-    roomId: room.id,
-    liveId: room.liveId,
-    commentId: item.id,
-    commentText: item.text,
-    commentSource: 'pending_queue',
-    ivhUseChat: useChat,
-    status: 'pending',
-    replyText: null,
-    imageUrl: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
-  jobs.set(jobId, job)
-  roomActiveJob.set(room.id, jobId)
-  setImmediate(() => {
-    runDigitalHumanPipeline(job, room, {
-      genUserSig,
-      trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
-    }).catch((e) => {
-      job.status = 'failed'
-      job.ivhError = job.ivhError || e?.message || String(e)
-      job.updatedAt = new Date().toISOString()
-    })
-  })
-  res.status(201).json(job)
-})
-
-/** 对当前房间仍保持的数智人会话再发一句（多轮）；需任务 status=image_done */
-app.post('/api/rooms/:id/digital-human/speak', async (req, res) => {
-  if (!DH_ALLOW_MANUAL_JOB) {
-    res.status(403).json({ error: 'DH_ALLOW_MANUAL_JOB=0 已关闭手动调试接口' })
-    return
-  }
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const text = String(req.body?.text || '').trim()
-  if (!text) {
-    res.status(400).json({ error: 'text 必填' })
-    return
-  }
-  const useChat = req.body?.use_chat === true || req.body?.use_chat === 'true'
-  const jobId = roomActiveJob.get(room.id)
-  const job = jobId ? jobs.get(jobId) : null
-  if (!job?.ivhSessionId) {
-    res.status(409).json({ error: '当前无带 SessionId 的活跃任务，请先完成一次数字人任务' })
-    return
-  }
-  if (job.status !== 'image_done') {
-    res.status(409).json({ error: `请等待首条任务完成（需 status=image_done，当前为 ${job.status}）` })
-    return
-  }
-  try {
-    await ivhSendText(job.ivhSessionId, text, { useChat })
-    job.replyText = text.slice(0, 400)
-    job.updatedAt = new Date().toISOString()
-    res.json({ ok: true, job })
-  } catch (e) {
-    const code = e.statusCode || 502
-    res.status(code).json({ error: e.message || String(e), ivhHeader: e.ivhHeader })
-  }
-})
-
-app.get('/api/rooms/:id/digital-human/jobs/:jobId', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const job = jobs.get(req.params.jobId)
-  if (!job || job.roomId !== room.id) {
-    res.status(404).json({ error: '任务不存在' })
-    return
-  }
-  res.json(job)
-})
-
-/** 最精简 demo：开始一条数字人测试任务（同 manual-job，但路径更短，便于「点击按钮」一键发起） */
-app.post('/api/rooms/:id/dh/start', (req, res) => {
-  if (!DH_ALLOW_MANUAL_JOB) {
-    res.status(403).json({ error: 'DH_ALLOW_MANUAL_JOB=0 已关闭手动调试接口' })
-    return
-  }
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const commentText = String(req.body?.text || '欢迎来到直播间，我是数字人主播，下面为大家带来一段精彩的直播测试。').trim()
-  const useChat = req.body?.use_chat === true || req.body?.use_chat === 'true'
-  const jobId = `job_${uuidv4().replace(/-/g, '').slice(0, 16)}`
-  const job = {
-    id: jobId,
-    roomId: room.id,
-    liveId: room.liveId,
-    commentId: `dh_${Date.now()}`,
-    commentText,
-    commentSource: 'dh_minimal',
-    ivhUseChat: useChat,
-    status: 'pending',
-    replyText: null,
-    imageUrl: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
-  jobs.set(jobId, job)
-  roomActiveJob.set(room.id, jobId)
-  setImmediate(() => {
-    runDigitalHumanPipeline(job, room, {
-      genUserSig,
-      trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
-    }).catch((e) => {
-      job.status = 'failed'
-      job.ivhError = job.ivhError || e?.message || String(e)
-      job.updatedAt = new Date().toISOString()
-    })
-  })
-  res.status(201).json(job)
-})
-
-/** 主动停止当前房间数字人会话；释放并发，前端「停止数字人」按钮使用 */
 async function stopRoomDigitalHuman(req, res) {
   const rooms = loadRooms()
   const room = rooms.find((r) => r.id === req.params.id)
@@ -689,24 +239,52 @@ async function stopRoomDigitalHuman(req, res) {
     job.updatedAt = new Date().toISOString()
   }
   roomActiveJob.delete(room.id)
+  room.broadcastStatus = 'idle'
+  const idx = rooms.findIndex((r) => r.id === room.id)
+  if (idx !== -1) {
+    rooms[idx] = { ...rooms[idx], broadcastStatus: 'idle' }
+    saveRooms(rooms)
+  }
   res.json({ ok: true, ...result, job: job || null })
 }
 
-app.post('/api/rooms/:id/dh/stop', stopRoomDigitalHuman)
-app.post('/api/rooms/:id/digital-human/stop-session', stopRoomDigitalHuman)
-
-app.get('/api/rooms/:id/digital-human/active-job', (req, res) => {
-  const rooms = loadRooms()
-  const room = rooms.find((r) => r.id === req.params.id)
-  if (!room) {
-    res.status(404).json({ error: '房间不存在' })
-    return
-  }
-  const jobId = roomActiveJob.get(room.id)
-  const job = jobId ? jobs.get(jobId) : null
-  res.json({ job: job || null })
-})
+if (ARCHIVE_LEGACY) {
+  const { mountLegacyRoutes } = await import('./archive/legacyRoutes.mjs')
+  mountLegacyRoutes(app, {
+    loadRooms,
+    genUserSig,
+    TRTC_SDK_APP_ID,
+    TRTC_SECRET_KEY,
+    IM_REST_ADMIN_USER_ID,
+    imGroupIdForRoom,
+    jobs,
+    roomActiveJob,
+    presubmitByTicket,
+    PRESUBMIT_TTL_MS,
+    DH_JOB_REQUIRE_TICKET,
+    DH_ALLOW_MANUAL_JOB,
+    pendingAudienceComments,
+    publicAudienceMessages,
+    getPendingAudienceList,
+    takePendingAudienceById,
+    PENDING_AUDIENCE_MAX,
+    PUBLIC_AUDIENCE_MAX,
+    stopRoomDigitalHuman,
+  })
+  console.log('[api] ARCHIVE_LEGACY=1：已挂载历史端点')
+}
 
 app.listen(PORT, () => {
   console.log(`[api] http://127.0.0.1:${PORT}`)
 })
+
+export {
+  app,
+  loadRooms,
+  saveRooms,
+  genUserSig,
+  jobs,
+  roomActiveJob,
+  stopRoomDigitalHuman,
+  TRTC_SDK_APP_ID,
+}

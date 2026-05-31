@@ -32,9 +32,13 @@
             <code>{{ r.liveId }}</code>
           </div>
           <div class="room__actions">
-            <RouterLink class="btn btn--sm btn--primary" :to="`/anchor/${r.id}`">主播控制台</RouterLink>
-            <RouterLink class="btn btn--sm" :to="{ path: '/', query: { liveId: r.liveId } }">观众 H5</RouterLink>
-            <RouterLink class="btn btn--sm btn--ghost" :to="`/anchor-canvas/${r.id}`">Canvas 遗留</RouterLink>
+            <RouterLink class="btn btn--sm btn--primary" :to="`/studio/${r.id}`">开始数字人播报直播</RouterLink>
+            <a
+              class="btn btn--sm"
+              :href="`/monitor/${r.id}`"
+              target="_blank"
+              rel="noopener noreferrer"
+            >监控窗口</a>
           </div>
         </li>
       </ul>

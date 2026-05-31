@@ -1,252 +1,91 @@
-# 直播间点赞动画 Demo
+# 数字人直播 · 交付 Demo
 
-这个仓库包含两个可直接复制使用的示例：
+面向开发 / 产品经理的可控后台数字人直播演示：**管理台 → 播控 → 监控** 三条主路径。
 
-- `demo/live-like-demo.html`：纯静态 HTML 手机端页面，右下角点击点赞后会弹出小表情包动画。
-- `components/LiveLikeButton.vue`：Vue 3 单文件组件，适合复制到真实项目中复用。
+## 快速开始（约 5 分钟）
 
-## Vite Playground 与本地 API（`npm run dev`）
-
-1. 复制环境变量模板并填写腾讯云 **SDKAppID** 与 **密钥**（用于签发 UserSig，勿提交仓库）：
+1. **环境变量**
 
    ```bash
    cp .env.example .env
    ```
 
-   - `TRTC_SDK_APP_ID`、`TRTC_SECRET_KEY`：仅服务端 `server/index.mjs` 读取（启动时通过 `dotenv` 加载根目录 `.env`）。
-   - `VITE_TRTC_SDK_APP_ID`：与 SDKAppID 相同数字，供观众页表单默认展示（可公开）。
-   - 可选 **数智人 aPaaS**：`IVH_APP_KEY`、`IVH_ACCESS_TOKEN`、`IVH_VIRTUALMAN_PROJECT_ID` 等（见 `.env.example`）；配置后 `POST .../digital-human/jobs` 将调用腾讯云网关；`GET /api/health` 返回 `ivhConfigured`。
-   - 可选 **`DH_JOB_REQUIRE_TICKET=1`**：创建数字人任务必须带 `presubmit_ticket`（先 `POST .../digital-human/comment-presubmit`）。
+   必填：`TRTC_SDK_APP_ID`、`TRTC_SECRET_KEY`、`IVH_APP_KEY`、`IVH_ACCESS_TOKEN`、`IVH_VIRTUALMAN_PROJECT_ID`  
+   前端展示：`VITE_TRTC_SDK_APP_ID`（与 SDKAppID 相同数字）
 
-2. 根目录启动 **API + 前端**（推荐）：
+   可选 LLM：`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`（不设则使用占位回复文案）
+
+   **勿设置** `IVH_AUTO_CLOSE_SESSION=1`（除非联调省并发），否则数智人会话会立即关闭。
+
+2. **启动**
 
    ```bash
+   npm install
    npm run dev
    ```
 
-   若只需前端（无 UserSig、管理台接口会失败）：
+   浏览器打开 Vite 提示的地址（通常 `http://127.0.0.1:5173`）。
 
-   ```bash
-   npm run dev:client
-   ```
+3. **演示流程**
 
-   单独启动 API：`npm run server`。
+   | 步骤 | URL | 操作 |
+   |------|-----|------|
+   | 管理台 | `/admin` | 创建直播间 |
+   | 播控 | `/studio/:roomId` | 开始直播 → 注入评论 → 生成回复 → 编辑 → 播报 |
+   | 监控 | `/monitor/:roomId` | 新窗口只读观看同一 `liveId` 数字人画面 |
 
-   使用 `npm run preview` 预览构建产物时，请**同时**在另一终端运行 `npm run server`（默认 `127.0.0.1:3001`）；`vite.config.js` 已为 `preview` 配置与 `dev` 相同的 `/api` 反向代理。
-
-3. **自检数智人环境变量是否生效**（填完 `.env` 并重启 API 后）：
+4. **健康检查**
 
    ```bash
    curl -s http://127.0.0.1:3001/api/health
    ```
 
-   关注 JSON 中的 `ivhConfigured`（应为 `true`）与 `ivhMissingEnvKeys`（应为 `[]`）。主播控制台页也会轮询该接口并展示「数智人配置」面板。
+   关注 `ivhConfigured` 应为 `true`。
 
-4. 路由说明（**已重写为「最精简数字人直播 demo」**：观众/主播都用原生 `trtc-sdk-v5` 订阅远端视频；
-   不再走 TUILiveKit 的 `startLive`/`LiveView`，根因见下方「为什么改写」）。
+## 主路由
 
-- **`/admin`**：管理台 — `GET/POST /api/rooms` 创建房间；房间列表导航到主播 / 观众页。
-- **`/anchor/:roomId`**：**主播控制台 · 数字人直播测试** — ① 点「主播开播」以 `anchor_*` 进入 TRTC
-  房间；②「发起数字人测试」调 `POST .../digital-human/manual-job`；③ 自定义文案 / 模拟评论；④ **观众待审评论**：对观众 `POST .../audience/pending-comments` 的队列可选「公区显示」「送入数字人」（`POST .../digital-human/job-from-pending`）或「忽略」。「停止数字人」为
-  `POST .../digital-human/stop-session`。
-- **`/`**：**观众 H5** — 同 `liveId` 进 TRTC 看播；底部 **提交审核** 仅将评论写入服务端待审队列（不会立刻出现在公区），主持人「公区显示」后轮询展示在公区列表。
-- **`/anchor-canvas/:roomId`**：**Canvas 遗留推流**（隐藏 iframe 方案，仅调试）。
-- **`/legacy`**：历史调试页（点赞 + 腾讯观众 JSON 面板）。
-- **`/archive/playground`**：重定向到 `/legacy`。
+| 路径 | 说明 |
+|------|------|
+| `/` | 重定向至 `/admin` |
+| `/admin` | 管理台：房间 CRUD |
+| `/studio/:roomId` | 播控台：评论 → 生成回复 → 播报 |
+| `/monitor/:roomId` | 监控页：只读 TRTC 预览 |
 
-### 为什么把主播 / 观众改成原生 TRTC？
+## 默认 API（交付 Demo）
 
-| 现象 | 根因 | 处理 |
-|------|------|------|
-| 旧 demo 数字人开播后能听到声音，但管理台 / 观众页无画面 | TUILiveKit `LiveView` 只渲染**直播会话的 anchor**那一路视频；数字人是同房间另一 TRTC 用户，音频会被自动混音，但视频不会被 `LiveView` 渲染 | 主播 / 观众页改用原生 `trtc-sdk-v5` 直接 `enterRoom(strRoomId=liveId)` + `startRemoteVideo({ userId })`；与「谁是 anchor」解耦 |
-| 服务端 aPaaS 创建会话时的 `TrtcStrRoomId` 等于业务 `liveId` | `liveId` 即字符串房间号，双方必须用同一种房间号语义进房 | 客户端固定走 `strRoomId`，与 `server/ivhPipeline.mjs` 一致 |
-| 数字人会话默认保留以维持推流 | `IVH_AUTO_CLOSE_SESSION=1` 时立刻 closesession 会让观众几乎看不到画面 | 提供 `POST /api/rooms/:id/digital-human/stop-session`（或 `dh/stop`）显式关闭；下一次 start 会自动先关上一会话 |
+```
+GET  /api/health
+GET  /api/rooms
+POST /api/rooms
+GET  /api/rooms/:id
+POST /api/rooms/:id/token
 
-5. Canvas 开播静态页也可直接打开仓库内 `demo/minimal-live-broadcast.html`（与 Playground 内嵌页逻辑一致；支持 URL 查询参数预填，见该文件内注释）。
+POST /api/rooms/:id/studio/start
+POST /api/rooms/:id/studio/stop
+GET  /api/rooms/:id/studio/session
 
-## 静态页面预览
+GET  /api/rooms/:id/studio/comments
+POST /api/rooms/:id/studio/comments
+PATCH /api/rooms/:id/studio/comments/:commentId
+POST /api/rooms/:id/studio/comments/:commentId/generate-reply
+POST /api/rooms/:id/studio/comments/:commentId/broadcast
+```
 
-直接用浏览器打开：
+历史端点（IM、presubmit、`digital-human/jobs` 等）见 `server/archive/legacyRoutes.mjs`，设置 `ARCHIVE_LEGACY=1` 后启用。
+
+## 归档代码
+
+点赞 Demo、观众 H5、Canvas 开播、TUILiveKit 调试面板等已移至 `archive/`，说明见 [archive/README.md](archive/README.md)。
+
+## 文档
+
+- [交付路线图](docs/delivery-demo-roadmap.md)
+- [演示脚本](docs/delivery-demo-script.md)（Phase E）
+- [数智人 TRTC 集成说明](docs/trtc-ivh-integration.md)
+
+## 构建
 
 ```bash
-demo/live-like-demo.html
+npm run build
+node --check server/index.mjs
 ```
-
-## Vue 组件使用
-
-```vue
-<template>
-  <LiveLikeButton :count="1280" @like="handleLike" />
-</template>
-
-<script setup>
-import LiveLikeButton from './components/LiveLikeButton.vue'
-
-function handleLike(nextCount) {
-  console.log('liked:', nextCount)
-}
-</script>
-```
-
-常用 props：
-
-- `emojis`：表情包数组。
-- `buttonEmoji`：按钮中展示的表情。
-- `count`：初始点赞数。
-- `showCount`：是否展示点赞数。
-- `burstSize`：每次点击弹出的表情数量。
-- `maxParticles`：页面上最多保留的动画粒子数量。
-- `size`：点赞按钮尺寸。
-
-## 迁移方案：复制到你的项目
-
-### 1. 复制文件
-
-把下面两个文件复制到你的项目中：
-
-```text
-components/LiveLikeButton.vue
-utils/LikeRequestThrottle.js
-```
-
-### 2. 使用最终默认动画参数
-
-组件默认值已经按下面这组 CSS 变量调整好。Vue 组件中通常不需要额外配置；如果你迁移到普通 HTML/CSS，或者自己改写组件样式，可以直接复制：
-
-```css
-.live-like {
-  --like-size: 54px;
-  --like-emoji-font: 30px;
-  --like-float-rise-min: 119px;
-  --like-float-rise-max: 179px;
-  --like-float-drift-max: 38px;
-  --like-float-sway-max: 10px;
-  --like-float-dur-min: 1350ms;
-  --like-float-dur-max: 2550ms;
-}
-```
-
-如果你想在 Vue 组件上显式传入同样参数，也可以复制：
-
-```vue
-<LiveLikeButton
-  :size="54"
-  :emoji-font-size="30"
-  :float-rise-min="119"
-  :float-rise-max="179"
-  :float-drift-max="38"
-  :float-sway-max="10"
-  :float-duration-min="1350"
-  :float-duration-max="2550"
-/>
-```
-
-### 3. 接入点赞接口
-
-需求逻辑是：
-
-- 用户点击后动画立即播放。
-- 一轮防抖内，第一次点击先让展示数 `+1`。
-- 这一轮里继续连点不再合并成多次点赞，也不继续累加数字。
-- 接口返回正确点赞总数后，用接口总数覆盖展示数。
-
-可直接复制下面的 Vue 示例：
-
-```vue
-<template>
-  <LiveLikeButton
-    await-server-count
-    :count="likeCount"
-    @like="handleLike"
-  />
-</template>
-
-<script setup>
-import { onUnmounted, ref } from 'vue'
-import LiveLikeButton from './components/LiveLikeButton.vue'
-import { LikeRequestThrottle } from './utils/LikeRequestThrottle.js'
-
-const likeCount = ref(1280)
-
-const likeThrottle = new LikeRequestThrottle({
-  waitMs: 1800,
-  onCommit: async () => {
-    // 替换成你的真实接口；接口应返回最新点赞总数。
-    const res = await fetch('/api/like', { method: 'POST' })
-    const data = await res.json()
-    likeCount.value = data.likeCount
-  },
-})
-
-function handleLike(payload) {
-  if (!payload || typeof payload !== 'object' || !('delta' in payload)) return
-
-  if (likeThrottle.tap()) {
-    likeCount.value += 1
-  }
-}
-
-onUnmounted(() => {
-  likeThrottle.dispose()
-})
-</script>
-```
-
-如果你暂时没有接口，也可以先这样模拟服务端返回：
-
-```js
-let serverLikeCount = likeCount.value
-
-const likeThrottle = new LikeRequestThrottle({
-  waitMs: 1800,
-  latencyMs: 600,
-  onCommit: async () => {
-    serverLikeCount += 1
-    likeCount.value = serverLikeCount
-  },
-})
-```
-
-## 腾讯直播 · 观众进房示例
-
-为了让研发侧能快速验证“可以从腾讯直播间取到房间信息”，仓库新增了一段
-真实可跑的观众进房示例：
-
-- `examples/tencentLiveAudience.js`：基于 `tuikit-atomicx-vue3`（AtomicXCore SDK）
-  封装了 `login` / `joinLive` / `fetchLiveInfo` / `queryMetaData` / `leaveLive`
-  / 事件订阅等观众侧 API，使用动态 `import` 懒加载 SDK，不影响点赞主包体积。
-- `components/TencentLiveAudiencePanel.vue`：调试面板，已挂在 Vite playground 中。
-  填入 `SDKAppID / userId / userSig / liveId` 即可真实进房，并把 `fetchLiveInfo`
-  与 `queryMetaData` 返回的房间信息以 JSON 形式展示出来，**不渲染视频画面**，仅用于
-  证明“可以拿到房间数据”。
-
-最小调用示例（可直接复制到任何 Vue3 工程）：
-
-```js
-import { useLoginState, useLiveListState } from 'tuikit-atomicx-vue3'
-
-const { login } = useLoginState()
-const { joinLive, fetchLiveInfo, queryMetaData, leaveLive } = useLiveListState()
-
-await login({
-  sdkAppId: 1400000000,
-  userId: 'viewer_001',
-  userSig: '<服务端生成的 userSig>',
-})
-
-await joinLive({ liveId: 'test_live_room_001' })
-
-const liveInfo = await fetchLiveInfo({ liveId: 'test_live_room_001' })
-console.log('房间信息:', liveInfo)
-// liveInfo: { liveName, notice, liveOwner, totalViewerCount, coverUrl, ... }
-
-const meta = await queryMetaData({ keys: ['currentGoodsId', 'countdown'] })
-console.log('房间元数据:', meta)
-
-await leaveLive()
-```
-
-参考文档：
-
-- [快速接入（Web）](https://www.tencentcloud.com/zh/document/product/1071/76729)
-- [LiveListStore API（含 queryMetaData）](https://cloud.tencent.com/document/product/647/128564#api-queryMetaData)
