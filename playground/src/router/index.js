@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AdminRooms from '../views/AdminRooms.vue'
-import AnchorBroadcast from '../views/AnchorBroadcast.vue'
-import MonitorPlaceholder from '../views/MonitorPlaceholder.vue'
+import StudioBroadcast from '../views/StudioBroadcast.vue'
+import MonitorLive from '../views/MonitorLive.vue'
 
 export const routes = [
   {
@@ -17,13 +17,13 @@ export const routes = [
   {
     path: '/studio/:roomId',
     name: 'studio-broadcast',
-    component: AnchorBroadcast,
+    component: StudioBroadcast,
     meta: { title: '播控台' },
   },
   {
     path: '/monitor/:roomId',
     name: 'monitor-live',
-    component: MonitorPlaceholder,
+    component: MonitorLive,
     meta: { title: '监控' },
   },
   {
