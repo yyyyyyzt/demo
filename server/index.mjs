@@ -248,6 +248,16 @@ async function stopRoomDigitalHuman(req, res) {
   res.json({ ok: true, ...result, job: job || null })
 }
 
+const { mountStudioRoutes } = await import('./studio.mjs')
+mountStudioRoutes(app, {
+  loadRooms,
+  saveRooms,
+  genUserSig,
+  TRTC_SDK_APP_ID,
+  jobs,
+  roomActiveJob,
+})
+
 if (ARCHIVE_LEGACY) {
   const { mountLegacyRoutes } = await import('./archive/legacyRoutes.mjs')
   mountLegacyRoutes(app, {

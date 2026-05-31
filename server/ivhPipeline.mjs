@@ -9,14 +9,24 @@ import {
   ivhWaitUntilSessionStarted,
 } from './ivhApaas.mjs'
 
-/** 每个业务房间（rooms.json 的 id）当前未主动 closesession 的数智人会话，用于新任务前释放上一路推流 */
+/** 每个业务房间当前保持打开的数智人会话 */
 const lastOpenIvhSessionByRoomInternalId = new Map()
+/** roomId -> { sessionId, ivhUserId, ivhVirtualmanUserId } */
+const sessionMetaByRoom = new Map()
 
-/** 主动结束某房间当前的数智人会话（用于「停止数字人」UI） */
+export function getRoomIvhSessionMeta(roomInternalId) {
+  const sessionId = lastOpenIvhSessionByRoomInternalId.get(roomInternalId)
+  if (!sessionId) return null
+  const meta = sessionMetaByRoom.get(roomInternalId) || {}
+  return { sessionId, ...meta }
+}
+
+/** 主动结束某房间当前的数智人会话 */
 export async function closeRoomIvhSession(roomInternalId) {
   const sessionId = lastOpenIvhSessionByRoomInternalId.get(roomInternalId)
   if (!sessionId) return { closed: false, reason: 'no_active_session' }
   lastOpenIvhSessionByRoomInternalId.delete(roomInternalId)
+  sessionMetaByRoom.delete(roomInternalId)
   try {
     await ivhCloseSession(sessionId)
     return { closed: true, sessionId }
@@ -38,6 +48,105 @@ function sanitizeComment(text) {
     .slice(0, 2000)
 }
 
+async function isSessionStillActive(sessionId) {
+  try {
+    const json = await ivhStatSession(sessionId)
+    const st = json.Payload?.SessionStatus
+    return st === 1 || st === 3
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 纯播报：固定 NotUseChat，由业务侧 LLM 生成文案。
+ */
+export async function broadcastText(sessionId, text) {
+  const safe = sanitizeComment(text)
+  if (!safe) throw Object.assign(new Error('播报文本为空'), { statusCode: 400 })
+  await ivhSendText(sessionId, safe, { useChat: false })
+  return safe
+}
+
+/**
+ * 若房间已有有效会话则复用；否则 createsession → startsession。
+ * @returns {{ sessionId: string, ivhUserId: string, reused: boolean, playStreamAddr?: string }}
+ */
+export async function ensureIvhSession(room, deps, options = {}) {
+  if (!isIvhConfigured()) {
+    const err = new Error('未配置 IVH_* 环境变量')
+    err.statusCode = 503
+    throw err
+  }
+
+  const existingId = lastOpenIvhSessionByRoomInternalId.get(room.id)
+  if (existingId && (await isSessionStillActive(existingId))) {
+    const meta = sessionMetaByRoom.get(room.id) || {}
+    return {
+      sessionId: existingId,
+      ivhUserId: meta.ivhUserId,
+      ivhVirtualmanUserId: meta.ivhVirtualmanUserId || meta.ivhUserId,
+      reused: true,
+      playStreamAddr: meta.playStreamAddr || null,
+    }
+  }
+  if (existingId) {
+    lastOpenIvhSessionByRoomInternalId.delete(room.id)
+    sessionMetaByRoom.delete(room.id)
+  }
+
+  const projectId = process.env.IVH_VIRTUALMAN_PROJECT_ID
+  const suffix = options.sessionSuffix || `st_${Date.now().toString(36)}`
+  const baseUid =
+    String(process.env.IVH_TRTC_USER_ID || '').trim() ||
+    `vh_${String(room.liveId).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 24)}`
+  const ivhUserId = `${baseUid}_${suffix}`.slice(0, 48)
+  const trtcUserSig = deps.genUserSig(ivhUserId)
+
+  const createJson = await ivhCreateTrtcSession({
+    virtualmanProjectId: projectId,
+    ivhUserId,
+    trtcAppId: deps.trtcSdkAppId,
+    trtcStrRoomId: room.liveId,
+    trtcUserSig,
+    privateMapKey: process.env.IVH_TRTC_PRIVATE_MAP_KEY || 'dummy',
+  })
+
+  const pl0 = createJson.Payload || {}
+  const sessionId = pl0.SessionId || pl0.SessionID
+  if (!sessionId) throw new Error('创建会话未返回 SessionId')
+
+  await ivhWaitUntilReady(sessionId)
+
+  const stat1 = await ivhStatSession(sessionId)
+  const p1 = stat1.Payload || {}
+  let playStreamAddr = p1.PlayStreamAddr || null
+
+  if (!p1.IsSessionStarted) {
+    await ivhStartSession(sessionId)
+    await ivhWaitUntilSessionStarted(sessionId)
+  }
+
+  const stat2 = await ivhStatSession(sessionId)
+  const p2 = stat2.Payload || {}
+  if (p2.PlayStreamAddr) playStreamAddr = p2.PlayStreamAddr
+
+  lastOpenIvhSessionByRoomInternalId.set(room.id, sessionId)
+  sessionMetaByRoom.set(room.id, {
+    ivhUserId,
+    ivhVirtualmanUserId: ivhUserId,
+    playStreamAddr,
+  })
+
+  return {
+    sessionId,
+    ivhUserId,
+    ivhVirtualmanUserId: ivhUserId,
+    reused: false,
+    playStreamAddr,
+  }
+}
+
 async function runPlaceholderPipeline(job) {
   job.status = 'llm_done'
   job.replyText = `【演示占位】服务端未检测到 IVH_*，未调用腾讯云数智人网关。将用于驱动的原文：${String(job.commentText).slice(0, 160)}`
@@ -49,12 +158,13 @@ async function runPlaceholderPipeline(job) {
 }
 
 /**
- * 异步执行：数智人云渲染 TRTC 进房 + HTTP 一句话文本驱动；失败则标记 failed。
- * @param {object} job — 已存入 jobs Map 的可变对象
- * @param {object} room — { id, liveId, ... }
- * @param {{ genUserSig: (userId: string, expire?: number) => string, trtcSdkAppId: string }} deps
+ * 异步执行数字人 pipeline。交付 Demo 默认不关旧会话（长驻流）。
+ * @param {{ closePreviousSession?: boolean, keepSessionOpen?: boolean }} [pipelineOptions]
  */
-export async function runDigitalHumanPipeline(job, room, deps) {
+export async function runDigitalHumanPipeline(job, room, deps, pipelineOptions = {}) {
+  const closePrevious = pipelineOptions.closePreviousSession === true
+  const keepOpen = pipelineOptions.keepSessionOpen !== false
+
   const safeText = sanitizeComment(job.commentText)
   job.commentText = safeText
   job.replyText = safeText.slice(0, 400)
@@ -66,69 +176,40 @@ export async function runDigitalHumanPipeline(job, room, deps) {
     return
   }
 
-  const prevSessionId = lastOpenIvhSessionByRoomInternalId.get(room.id)
-  if (prevSessionId) {
-    try {
-      await ivhCloseSession(prevSessionId)
-    } catch {
-      /* noop */
+  if (closePrevious) {
+    const prevSessionId = lastOpenIvhSessionByRoomInternalId.get(room.id)
+    if (prevSessionId) {
+      try {
+        await ivhCloseSession(prevSessionId)
+      } catch {
+        /* noop */
+      }
+      lastOpenIvhSessionByRoomInternalId.delete(room.id)
+      sessionMetaByRoom.delete(room.id)
     }
-    lastOpenIvhSessionByRoomInternalId.delete(room.id)
   }
 
   let sessionId = null
   try {
-    const projectId = process.env.IVH_VIRTUALMAN_PROJECT_ID
-    const baseUid =
-      String(process.env.IVH_TRTC_USER_ID || '').trim() ||
-      `vh_${String(room.liveId).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 24)}`
-    const ivhUserId = `${baseUid}_${job.id.slice(-8)}`.slice(0, 48)
-    const trtcUserSig = deps.genUserSig(ivhUserId)
-
-    const createJson = await ivhCreateTrtcSession({
-      virtualmanProjectId: projectId,
-      ivhUserId,
-      trtcAppId: deps.trtcSdkAppId,
-      trtcStrRoomId: room.liveId,
-      trtcUserSig,
-      privateMapKey: process.env.IVH_TRTC_PRIVATE_MAP_KEY || 'dummy',
+    const ensured = await ensureIvhSession(room, deps, {
+      sessionSuffix: job.id?.slice(-8) || 'job',
     })
-
-    const pl0 = createJson.Payload || {}
-    sessionId = pl0.SessionId || pl0.SessionID
-    if (!sessionId) throw new Error('创建会话未返回 SessionId')
+    sessionId = ensured.sessionId
     job.ivhSessionId = sessionId
-    job.ivhVirtualmanUserId = ivhUserId
+    job.ivhVirtualmanUserId = ensured.ivhUserId
+    job.ivhPlayStreamAddr = ensured.playStreamAddr
     job.updatedAt = new Date().toISOString()
 
-    await ivhWaitUntilReady(sessionId)
+    await broadcastText(sessionId, safeText)
 
-    const stat1 = await ivhStatSession(sessionId)
-    const p1 = stat1.Payload || {}
-    job.ivhPlayStreamAddr = p1.PlayStreamAddr || job.ivhPlayStreamAddr || null
-    job.updatedAt = new Date().toISOString()
-
-    if (!p1.IsSessionStarted) {
-      await ivhStartSession(sessionId)
-      await ivhWaitUntilSessionStarted(sessionId)
-    }
-
-    const stat2 = await ivhStatSession(sessionId)
-    const p2 = stat2.Payload || {}
-    if (p2.PlayStreamAddr) job.ivhPlayStreamAddr = p2.PlayStreamAddr
-
-    await ivhSendText(sessionId, safeText, { useChat: Boolean(job.ivhUseChat) })
-
-    // 默认不 closesession：否则数智人立即退房，观众端几乎看不到画面（日志里 peer-leave 即此）。
-    // 新任务开始时会先关闭本房间上一会话。联调/省并发可设 IVH_AUTO_CLOSE_SESSION=1。
-    if (IVH_AUTO_CLOSE_SESSION) {
+    if (IVH_AUTO_CLOSE_SESSION && !keepOpen) {
       await sleep(1200)
       await ivhCloseSession(sessionId)
       job.ivhClosed = true
       lastOpenIvhSessionByRoomInternalId.delete(room.id)
+      sessionMetaByRoom.delete(room.id)
     } else {
       job.ivhSessionKeptOpen = true
-      lastOpenIvhSessionByRoomInternalId.set(room.id, sessionId)
     }
 
     job.status = 'image_done'
@@ -138,13 +219,14 @@ export async function runDigitalHumanPipeline(job, room, deps) {
     job.status = 'failed'
     job.ivhError = e?.message || String(e)
     job.updatedAt = new Date().toISOString()
-    if (sessionId) {
+    if (sessionId && closePrevious) {
       try {
         await ivhCloseSession(sessionId)
       } catch {
         /* noop */
       }
+      lastOpenIvhSessionByRoomInternalId.delete(room.id)
+      sessionMetaByRoom.delete(room.id)
     }
-    lastOpenIvhSessionByRoomInternalId.delete(room.id)
   }
 }

@@ -232,11 +232,16 @@ export function mountLegacyRoutes(app, ctx) {
     jobs.set(jobId, job)
     roomActiveJob.set(room.id, jobId)
     setImmediate(() => {
-      runDigitalHumanPipeline(job, room, {
-        genUserSig,
-        trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
-        ...pipelineOpts,
-      }).catch((e) => {
+      runDigitalHumanPipeline(
+        job,
+        room,
+        {
+          genUserSig,
+          trtcSdkAppId: String(TRTC_SDK_APP_ID || ''),
+          ...pipelineOpts,
+        },
+        { closePreviousSession: true, keepSessionOpen: process.env.IVH_AUTO_CLOSE_SESSION !== '1' },
+      ).catch((e) => {
         job.status = 'failed'
         job.ivhError = job.ivhError || e?.message || String(e)
         job.updatedAt = new Date().toISOString()
