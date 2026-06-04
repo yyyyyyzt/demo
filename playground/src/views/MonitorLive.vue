@@ -128,34 +128,50 @@ watch(hasRemoteVideo, (v) => {
 .monitor {
   max-width: 960px;
   margin: 0 auto;
-  padding: 20px;
+  padding: max(20px, env(safe-area-inset-top)) 20px 40px;
 }
 .monitor__title {
   margin: 0 0 8px;
 }
 .monitor__meta {
-  color: #555;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 0.9rem;
+}
+.monitor__meta code {
+  color: #b8e0ff;
 }
 .status-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
-  font-size: 14px;
+  font-size: 0.85rem;
   margin-bottom: 12px;
   padding: 10px 12px;
-  background: #fafafa;
-  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.85);
+}
+.status-bar code {
+  color: #b8e0ff;
+  font-size: 0.78rem;
 }
 .stage-host {
   position: relative;
-  background: #111;
-  border-radius: 8px;
+  width: 100%;
+  background: #000;
+  border-radius: 10px;
   aspect-ratio: 16 / 9;
   overflow: hidden;
 }
 .stage {
   width: 100%;
   height: 100%;
+  min-height: 0;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .stage-overlay {
   position: absolute;
@@ -163,22 +179,36 @@ watch(hasRemoteVideo, (v) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ccc;
-  font-size: 14px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.85rem;
   text-align: center;
   padding: 16px;
+  z-index: 1;
 }
 .stage-overlay--warn {
   background: rgba(0, 0, 0, 0.55);
   color: #ffccc7;
 }
 .err {
-  color: #cf1322;
+  color: #ff9b9b;
 }
 .muted {
-  color: #888;
+  color: rgba(255, 255, 255, 0.5);
 }
 .small {
   font-size: 12px;
+}
+</style>
+
+<style>
+.monitor .stage > div,
+.monitor .stage video {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain !important;
+  object-position: center center !important;
+  background: #000;
 }
 </style>

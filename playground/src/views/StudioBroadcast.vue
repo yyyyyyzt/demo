@@ -20,7 +20,12 @@
         <button v-else type="button" class="btn btn--danger" :disabled="busy" @click="onStopLive">
           {{ busy ? '结束中…' : '结束直播' }}
         </button>
-        <button type="button" class="btn" :disabled="!liveActive || injecting" @click="onInjectComment">
+        <button
+          type="button"
+          class="btn btn--secondary"
+          :disabled="!liveActive || injecting"
+          @click="onInjectComment"
+        >
           {{ injecting ? '注入中…' : '注入测试评论' }}
         </button>
       </div>
@@ -395,7 +400,7 @@ onUnmounted(() => {
 .studio {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 16px 20px 40px;
+  padding: max(16px, env(safe-area-inset-top)) 20px max(40px, env(safe-area-inset-bottom));
 }
 .studio__head {
   margin-bottom: 16px;
@@ -405,13 +410,19 @@ onUnmounted(() => {
   font-size: 1.35rem;
 }
 .studio__meta {
-  color: #555;
+  color: rgba(255, 255, 255, 0.65);
   margin: 0 0 12px;
+  font-size: 0.9rem;
+}
+.studio__meta code {
+  color: #b8e0ff;
+  font-size: 0.85em;
 }
 .studio__toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
+  align-items: center;
 }
 .studio__grid {
   display: grid;
@@ -425,14 +436,15 @@ onUnmounted(() => {
   }
 }
 .col {
-  background: #fff;
-  border: 1px solid #e8e8e8;
-  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
   padding: 14px 16px;
 }
 .col__title {
   margin: 0 0 12px;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
 }
 .comment-list {
   list-style: none;
@@ -442,15 +454,16 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 .comment-row {
-  border: 1px solid #eee;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   padding: 10px;
   margin-bottom: 8px;
   cursor: pointer;
+  background: rgba(255, 255, 255, 0.03);
 }
 .comment-row--selected {
-  border-color: #1677ff;
-  background: #f0f7ff;
+  border-color: rgba(79, 141, 255, 0.65);
+  background: rgba(79, 141, 255, 0.12);
 }
 .comment-row__head {
   display: flex;
@@ -463,27 +476,29 @@ onUnmounted(() => {
   font-weight: 600;
 }
 .comment-row__time {
-  color: #999;
+  color: rgba(255, 255, 255, 0.45);
   font-size: 12px;
 }
 .badge {
   font-size: 11px;
   padding: 2px 6px;
   border-radius: 4px;
-  background: #f5f5f5;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.75);
 }
 .badge[data-status='ready'] {
-  background: #e6f4ff;
-  color: #1677ff;
+  background: rgba(79, 141, 255, 0.25);
+  color: #9ad4ff;
 }
 .badge[data-status='broadcasted'] {
-  background: #f6ffed;
-  color: #389e0d;
+  background: rgba(82, 196, 26, 0.2);
+  color: #b7eb8f;
 }
 .comment-row__text {
   margin: 0 0 8px;
   font-size: 14px;
   line-height: 1.45;
+  color: rgba(255, 255, 255, 0.88);
 }
 .comment-row__actions {
   display: flex;
@@ -491,14 +506,20 @@ onUnmounted(() => {
 }
 .stage-host {
   position: relative;
-  background: #111;
-  border-radius: 8px;
+  width: 100%;
+  background: #000;
+  border-radius: 10px;
   aspect-ratio: 16 / 9;
   overflow: hidden;
 }
 .stage {
   width: 100%;
   height: 100%;
+  min-height: 0;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .stage-overlay {
   position: absolute;
@@ -506,19 +527,26 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ccc;
-  font-size: 14px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.85rem;
   pointer-events: none;
   text-align: center;
   padding: 12px;
+  z-index: 1;
 }
 .session-bar {
   margin-top: 12px;
-  font-size: 13px;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+.session-bar code {
+  color: #b8e0ff;
+  font-size: 0.78rem;
+  word-break: break-all;
 }
 .reply-box {
   margin-top: 16px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
   padding-top: 12px;
 }
 .reply-box__title {
@@ -529,54 +557,91 @@ onUnmounted(() => {
   width: 100%;
   box-sizing: border-box;
   font: inherit;
-  padding: 8px;
-  border-radius: 6px;
-  border: 1px solid #ddd;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
   resize: vertical;
 }
 .back {
-  color: #1677ff;
+  color: #9ad4ff;
   text-decoration: none;
   font-size: 14px;
 }
 .btn {
-  border: 1px solid #d9d9d9;
-  background: #fff;
-  border-radius: 6px;
-  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 9px 16px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.88rem;
+  line-height: 1.2;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.32);
 }
 .btn--primary {
-  background: #1677ff;
-  border-color: #1677ff;
-  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, #4f8dff 0%, #7e5bff 100%);
+}
+.btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.btn--secondary {
+  border-color: rgba(154, 212, 255, 0.45);
+  background: rgba(79, 141, 255, 0.15);
+  color: #d6ebff;
+}
+.btn--secondary:hover:not(:disabled) {
+  background: rgba(79, 141, 255, 0.28);
 }
 .btn--danger {
-  background: #ff4d4f;
-  border-color: #ff4d4f;
-  color: #fff;
+  border-color: rgba(255, 120, 117, 0.55);
+  background: rgba(255, 77, 79, 0.22);
+  color: #ffccc7;
+}
+.btn--danger:hover:not(:disabled) {
+  background: rgba(255, 77, 79, 0.38);
+  border-color: rgba(255, 120, 117, 0.75);
 }
 .btn--sm {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
 }
 .btn:disabled {
-  opacity: 0.55;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 .err {
-  color: #cf1322;
+  color: #ff9b9b;
 }
 .muted {
-  color: #888;
+  color: rgba(255, 255, 255, 0.5);
 }
 .small {
   font-size: 12px;
 }
 .hint {
-  color: #666;
+  color: rgba(255, 255, 255, 0.55);
   font-size: 12px;
   margin-top: 6px;
+}
+</style>
+
+<style>
+/* TRTC 注入的 video 节点：完整显示在 16:9 容器内（letterbox） */
+.studio .stage > div,
+.studio .stage video {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain !important;
+  object-position: center center !important;
+  background: #000;
 }
 </style>
