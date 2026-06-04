@@ -234,7 +234,9 @@ app.post('/api/rooms/:id/token', (req, res) => {
           ? 'moderator'
           : roleRaw === 'monitor'
             ? 'monitor'
-            : 'audience'
+            : roleRaw === 'preview'
+              ? 'preview'
+              : 'audience'
 
     const safeLiveKey = String(room.liveId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 36)
 
@@ -243,6 +245,7 @@ app.post('/api/rooms/:id/token', (req, res) => {
       if (role === 'anchor') userId = `anchor_${safeLiveKey}`.slice(0, 48)
       else if (role === 'moderator') userId = `mod_${safeLiveKey}`.slice(0, 48)
       else if (role === 'monitor') userId = `monitor_${uuidv4().replace(/-/g, '').slice(0, 8)}`
+      else if (role === 'preview') userId = `studio_prev_${uuidv4().replace(/-/g, '').slice(0, 10)}`
       else userId = `viewer_${uuidv4().replace(/-/g, '').slice(0, 12)}`
     }
     const expire = Math.min(Math.max(Number(req.body?.expire) || 86400, 300), 86400 * 30)

@@ -48,7 +48,12 @@ async function liveEnginePost(command, body, { sdkAppId, secretKey, adminUserId 
     throw err
   }
   if (json.ErrorCode !== 0 && json.ErrorCode != null) {
-    const err = new Error(json.ErrorInfo || `TUILive ErrorCode=${json.ErrorCode}`)
+    let msg = json.ErrorInfo || `TUILive ErrorCode=${json.ErrorCode}`
+    if (/admin account/i.test(msg)) {
+      msg =
+        'REST 请求的 identifier 必须是该 SDKAppID 的 App 管理员账号（控制台 → 应用配置 → 账号管理）。请检查 TUILIVE_REST_ADMIN_USER_ID'
+    }
+    const err = new Error(msg)
     err.statusCode = 502
     err.tuiLiveCode = json.ErrorCode
     throw err
@@ -75,10 +80,7 @@ export async function createTuiLiveRoom(p) {
         RoomName: String(p.title || p.liveId).slice(0, 100),
         Owner_Account: String(p.ownerAccount),
         IsPublicVisible: true,
-        IsSeatEnabled: true,
-        MaxSeatCount: 1,
-        TakeSeatMode: 'FreeToTake',
-        SeatTemplate: 'VideoDynamicGrid9Seats',
+        IsSeatEnabled: false,
       },
     },
     { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },

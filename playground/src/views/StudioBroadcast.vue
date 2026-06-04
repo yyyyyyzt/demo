@@ -78,7 +78,13 @@
         <div class="stage-host">
           <div ref="stageRef" class="stage" />
           <p v-if="!hasRemoteVideo" class="stage-overlay">
-            {{ trtcEntered ? '等待数字人进房推流…' : '开始直播后将自动进入 TRTC 预览' }}
+            {{
+              previewEntered
+                ? hasRemoteVideo
+                  ? ''
+                  : '等待数字人进房推流…'
+                : '开始直播后将建立预览连接'
+            }}
           </p>
         </div>
         <div class="session-bar">
@@ -93,7 +99,11 @@
             任务：<code>{{ session.job.status }}</code>
             <span v-if="session.job.ivhSessionKeptOpen"> · 会话保持</span>
           </p>
-          <p v-if="trtcError" class="err small">{{ trtcError }}</p>
+          <p v-if="tuiError" class="err small">TUILive：{{ tuiError }}</p>
+          <p v-if="previewError" class="err small">预览：{{ previewError }}</p>
+          <p v-if="remoteUsers.length" class="muted small">
+            房间内远端：<code>{{ remoteUsers.join(', ') }}</code>
+          </p>
           <p v-if="statusHint" class="hint">{{ statusHint }}</p>
         </div>
 
@@ -117,20 +127,27 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTuiLiveBroadcast } from '../utils/useTuiLiveBroadcast.js'
+import { useTrtcStage } from '../utils/useTrtcStage.js'
 
 const route = useRoute()
 const roomId = computed(() => route.params.roomId)
 
+const { status: tuiStatus, errorMessage: tuiError, enterAsAnchor, leave: leaveTuiLive } =
+  useTuiLiveBroadcast()
+
 const {
   stageRef,
-  status: trtcStatus,
-  errorMessage: trtcError,
+  status: previewStatus,
+  errorMessage: previewError,
   hasRemoteVideo,
-  enterAsAnchor,
-  leave: leaveTuiLive,
-} = useTuiLiveBroadcast()
+  remoteUsers,
+  enterRoom: enterPreviewRoom,
+  exitRoom: exitPreviewRoom,
+  subscribeRemoteUser,
+} = useTrtcStage()
 
-const trtcEntered = computed(() => trtcStatus.value === 'entered')
+const tuiLiveEntered = computed(() => tuiStatus.value === 'entered')
+const previewEntered = computed(() => previewStatus.value === 'entered')
 
 const room = ref(null)
 const loading = ref(true)
@@ -225,7 +242,7 @@ async function refreshSession() {
 }
 
 async function ensureTuiLiveAnchor() {
-  if (trtcEntered.value || !room.value) return
+  if (tuiLiveEntered.value || !room.value) return
   const tokRes = await fetch(`/api/rooms/${room.value.id}/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -242,6 +259,41 @@ async function ensureTuiLiveAnchor() {
   })
 }
 
+async function ensurePreviewRoom() {
+  if (previewEntered.value || !room.value) return
+  const tokRes = await fetch(`/api/rooms/${room.value.id}/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'preview' }),
+  })
+  const tok = await tokRes.json()
+  if (!tokRes.ok) throw new Error(tok.error || tokRes.statusText)
+  await enterPreviewRoom({
+    sdkAppId: tok.sdkAppId,
+    userId: tok.userId,
+    userSig: tok.userSig,
+    strRoomId: tok.liveId,
+    role: 'audience',
+  })
+}
+
+function trySubscribeDigitalHuman() {
+  const dhId = session.value.ivhVirtualmanUserId
+  if (dhId) {
+    subscribeRemoteUser(dhId)
+    return
+  }
+  for (const uid of remoteUsers.value) {
+    if (uid.startsWith('vh_') || uid.includes('virtual')) {
+      subscribeRemoteUser(uid)
+      return
+    }
+  }
+  if (remoteUsers.value.length === 1) {
+    subscribeRemoteUser(remoteUsers.value[0])
+  }
+}
+
 async function onStartLive() {
   if (!room.value) return
   busy.value = true
@@ -256,23 +308,32 @@ async function onStartLive() {
     })
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
+    await ensurePreviewRoom()
     const tuiParts = []
-    if (j.tuiLive?.registered) tuiParts.push('已在云端注册直播间')
-    else if (j.tuiLive?.error) tuiParts.push(`云端注册提示：${j.tuiLive.error}`)
+    if (j.tuiLive?.registered) tuiParts.push('云端 create_room 成功')
+    else if (j.tuiLive?.error) {
+      tuiParts.push(
+        `云端 create_room 未成功（不影响 startLive）：${j.tuiLive.error}。请在 .env 配置 App 管理员 TUILIVE_REST_ADMIN_USER_ID`,
+      )
+    }
     statusHint.value = [
       j.placeholder
         ? '未配置 IVH，使用占位模式（无真实推流）'
         : j.reused
           ? '已复用现有数智人会话'
           : '数智人会话已建立，欢迎语已播报',
-      '已在 TUILiveKit 开播，可在腾讯云直播管理后台按 liveId 检索',
+      'TUILiveKit 已 startLive，管理后台可按 liveId 检索',
       ...tuiParts,
     ]
       .filter(Boolean)
       .join(' · ')
     await refreshSession()
+    trySubscribeDigitalHuman()
+    setTimeout(trySubscribeDigitalHuman, 2000)
+    setTimeout(trySubscribeDigitalHuman, 5000)
   } catch (e) {
     err.value = e?.message || String(e)
+    await exitPreviewRoom().catch(() => {})
     await leaveTuiLive().catch(() => {})
   } finally {
     busy.value = false
@@ -287,8 +348,9 @@ async function onStopLive() {
     const r = await fetch(`/api/rooms/${room.value.id}/studio/stop`, { method: 'POST' })
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
+    await exitPreviewRoom()
     await leaveTuiLive()
-    statusHint.value = '直播已结束（含 TUILiveKit endLive）'
+    statusHint.value = '直播已结束（预览退房 + TUILiveKit endLive）'
     await refreshSession()
   } catch (e) {
     err.value = e?.message || String(e)
@@ -391,19 +453,32 @@ watch(roomId, () => {
   loadRoom()
 })
 
+watch(
+  () => session.value.ivhVirtualmanUserId,
+  (uid) => {
+    if (uid && previewEntered.value) subscribeRemoteUser(uid)
+  },
+)
+
 onMounted(async () => {
   await loadRoom()
   await refreshComments()
   await refreshSession()
-  if (liveActive.value) await ensureTuiLiveAnchor()
-  pollTimer = setInterval(() => {
+  if (liveActive.value) {
+    await ensureTuiLiveAnchor().catch(() => {})
+    await ensurePreviewRoom().catch(() => {})
+    trySubscribeDigitalHuman()
+  }
+  pollTimer = setInterval(async () => {
     refreshComments()
-    refreshSession()
+    await refreshSession()
+    if (liveActive.value && previewEntered.value) trySubscribeDigitalHuman()
   }, 3000)
 })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
+  exitPreviewRoom()
   leaveTuiLive()
 })
 </script>

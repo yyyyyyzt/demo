@@ -85,6 +85,12 @@ export function useTrtcStage() {
     }
   }
 
+  /** 数智人进房后若错过事件，可主动按 userId 订阅 */
+  function subscribeRemoteUser(userId, streamType) {
+    if (!userId) return
+    attachRemoteVideo(userId, streamType || TRTC.TYPE.STREAM_TYPE_MAIN)
+  }
+
   async function exitRoom() {
     if (!client.value) {
       status.value = 'idle'
@@ -119,5 +125,6 @@ export function useTrtcStage() {
     hasRemoteVideo,
     enterRoom,
     exitRoom,
+    subscribeRemoteUser,
   }
 }
