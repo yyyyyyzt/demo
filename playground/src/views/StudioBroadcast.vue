@@ -93,6 +93,7 @@
             任务：<code>{{ session.job.status }}</code>
             <span v-if="session.job.ivhSessionKeptOpen"> · 会话保持</span>
           </p>
+          <p v-if="trtcError" class="err small">{{ trtcError }}</p>
           <p v-if="statusHint" class="hint">{{ statusHint }}</p>
         </div>
 
@@ -115,7 +116,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { useTrtcStage } from '../utils/useTrtcStage.js'
+import { useTuiLiveBroadcast } from '../utils/useTuiLiveBroadcast.js'
 
 const route = useRoute()
 const roomId = computed(() => route.params.roomId)
@@ -123,10 +124,11 @@ const roomId = computed(() => route.params.roomId)
 const {
   stageRef,
   status: trtcStatus,
+  errorMessage: trtcError,
   hasRemoteVideo,
-  enterRoom,
-  exitRoom,
-} = useTrtcStage()
+  enterAsAnchor,
+  leave: leaveTuiLive,
+} = useTuiLiveBroadcast()
 
 const trtcEntered = computed(() => trtcStatus.value === 'entered')
 
@@ -222,7 +224,7 @@ async function refreshSession() {
   }
 }
 
-async function ensureTrtcPreview() {
+async function ensureTuiLiveAnchor() {
   if (trtcEntered.value || !room.value) return
   const tokRes = await fetch(`/api/rooms/${room.value.id}/token`, {
     method: 'POST',
@@ -231,12 +233,12 @@ async function ensureTrtcPreview() {
   })
   const tok = await tokRes.json()
   if (!tokRes.ok) throw new Error(tok.error || tokRes.statusText)
-  await enterRoom({
+  await enterAsAnchor({
     sdkAppId: tok.sdkAppId,
     userId: tok.userId,
     userSig: tok.userSig,
-    strRoomId: tok.liveId,
-    role: 'anchor',
+    liveId: tok.liveId,
+    liveName: room.value.title,
   })
 }
 
@@ -246,6 +248,7 @@ async function onStartLive() {
   statusHint.value = ''
   err.value = ''
   try {
+    await ensureTuiLiveAnchor()
     const r = await fetch(`/api/rooms/${room.value.id}/studio/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -253,15 +256,24 @@ async function onStartLive() {
     })
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
-    statusHint.value = j.placeholder
-      ? '未配置 IVH，使用占位模式（无真实推流）'
-      : j.reused
-        ? '已复用现有数智人会话'
-        : '数智人会话已建立，欢迎语已播报'
-    await ensureTrtcPreview()
+    const tuiParts = []
+    if (j.tuiLive?.registered) tuiParts.push('已在云端注册直播间')
+    else if (j.tuiLive?.error) tuiParts.push(`云端注册提示：${j.tuiLive.error}`)
+    statusHint.value = [
+      j.placeholder
+        ? '未配置 IVH，使用占位模式（无真实推流）'
+        : j.reused
+          ? '已复用现有数智人会话'
+          : '数智人会话已建立，欢迎语已播报',
+      '已在 TUILiveKit 开播，可在腾讯云直播管理后台按 liveId 检索',
+      ...tuiParts,
+    ]
+      .filter(Boolean)
+      .join(' · ')
     await refreshSession()
   } catch (e) {
     err.value = e?.message || String(e)
+    await leaveTuiLive().catch(() => {})
   } finally {
     busy.value = false
   }
@@ -275,8 +287,8 @@ async function onStopLive() {
     const r = await fetch(`/api/rooms/${room.value.id}/studio/stop`, { method: 'POST' })
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
-    await exitRoom()
-    statusHint.value = '直播已结束'
+    await leaveTuiLive()
+    statusHint.value = '直播已结束（含 TUILiveKit endLive）'
     await refreshSession()
   } catch (e) {
     err.value = e?.message || String(e)
@@ -383,7 +395,7 @@ onMounted(async () => {
   await loadRoom()
   await refreshComments()
   await refreshSession()
-  if (liveActive.value) await ensureTrtcPreview()
+  if (liveActive.value) await ensureTuiLiveAnchor()
   pollTimer = setInterval(() => {
     refreshComments()
     refreshSession()
@@ -392,7 +404,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
-  exitRoom()
+  leaveTuiLive()
 })
 </script>
 

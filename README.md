@@ -83,6 +83,7 @@ POST /api/rooms/:id/studio/comments/:commentId/broadcast
 - [交付路线图](docs/delivery-demo-roadmap.md)
 - [演示脚本](docs/delivery-demo-script.md)（Phase E）
 - [数智人 TRTC 集成说明](docs/trtc-ivh-integration.md)
+- [腾讯云直播管理后台可见性](docs/tuilive-manager-integration.md)
 
 ## 构建
 

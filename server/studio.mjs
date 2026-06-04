@@ -11,6 +11,18 @@ import {
   runDigitalHumanPipeline,
 } from './ivhPipeline.mjs'
 import { isIvhConfigured } from './ivhApaas.mjs'
+import {
+  createTuiLiveRoom,
+  destroyTuiLiveRoom,
+  isTuiLiveRestConfigured,
+} from './tuiLiveRest.mjs'
+
+const TUILIVE_REGISTER_ON_STUDIO = process.env.TUILIVE_REGISTER_ON_STUDIO !== '0'
+
+function anchorOwnerAccount(liveId) {
+  const safeLiveKey = String(liveId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 36)
+  return `anchor_${safeLiveKey}`.slice(0, 48)
+}
 
 /** @type {Map<string, Array<object>>} */
 const studioCommentsByRoom = new Map()
@@ -72,7 +84,8 @@ function makeJob(room, fields = {}) {
 }
 
 export function mountStudioRoutes(app, ctx) {
-  const { loadRooms, saveRooms, genUserSig, TRTC_SDK_APP_ID, jobs, roomActiveJob } = ctx
+  const { loadRooms, saveRooms, genUserSig, TRTC_SDK_APP_ID, TRTC_SECRET_KEY, jobs, roomActiveJob } =
+    ctx
 
   const ivhDeps = () => ({
     genUserSig,
@@ -245,6 +258,22 @@ export function mountStudioRoutes(app, ctx) {
     jobs.set(job.id, job)
     roomActiveJob.set(room.id, job.id)
 
+    let tuiLive = { skipped: true }
+    if (TUILIVE_REGISTER_ON_STUDIO && isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
+      try {
+        await createTuiLiveRoom({
+          sdkAppId: TRTC_SDK_APP_ID,
+          secretKey: TRTC_SECRET_KEY,
+          liveId: room.liveId,
+          title: room.title,
+          ownerAccount: anchorOwnerAccount(room.liveId),
+        })
+        tuiLive = { registered: true, liveId: room.liveId }
+      } catch (e) {
+        tuiLive = { registered: false, error: e?.message || String(e), code: e?.tuiLiveCode }
+      }
+    }
+
     try {
       if (!isIvhConfigured()) {
         job.status = 'image_done'
@@ -256,6 +285,8 @@ export function mountStudioRoutes(app, ctx) {
           ivhSessionId: null,
           ivhVirtualmanUserId: null,
           placeholder: true,
+          tuiLive,
+          anchorUserId: anchorOwnerAccount(room.liveId),
         })
         return
       }
@@ -277,6 +308,8 @@ export function mountStudioRoutes(app, ctx) {
         ivhSessionId: ensured.sessionId,
         ivhVirtualmanUserId: ensured.ivhVirtualmanUserId,
         reused: ensured.reused,
+        tuiLive,
+        anchorUserId: anchorOwnerAccount(room.liveId),
       })
     } catch (e) {
       job.status = 'failed'
@@ -302,6 +335,21 @@ export function mountStudioRoutes(app, ctx) {
     }
     roomActiveJob.delete(room.id)
     setRoomBroadcastStatus(rooms, room, 'idle', saveRooms)
-    res.json({ ok: true, ...result, job: job || null })
+
+    let tuiLive = { skipped: true }
+    if (TUILIVE_REGISTER_ON_STUDIO && isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
+      try {
+        await destroyTuiLiveRoom({
+          sdkAppId: TRTC_SDK_APP_ID,
+          secretKey: TRTC_SECRET_KEY,
+          liveId: room.liveId,
+        })
+        tuiLive = { destroyed: true }
+      } catch (e) {
+        tuiLive = { destroyed: false, error: e?.message || String(e) }
+      }
+    }
+
+    res.json({ ok: true, ...result, job: job || null, tuiLive })
   })
 }

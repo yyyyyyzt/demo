@@ -1,0 +1,103 @@
+/**
+ * TUILiveKit 服务端 REST — 在直播管理后台创建/解散直播间
+ * 文档：https://cloud.tencent.com/document/product/1071/76885
+ */
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const { Api: TLSSigApi } = require('tls-sig-api-v2')
+
+const DEFAULT_DOMAIN = 'https://console.tim.qq.com'
+
+export function getTuiLiveRestAdminUserId() {
+  return String(process.env.TUILIVE_REST_ADMIN_USER_ID || process.env.IM_REST_ADMIN_USER_ID || '').trim()
+}
+
+export function isTuiLiveRestConfigured(sdkAppId, secretKey) {
+  return Boolean(sdkAppId && secretKey && getTuiLiveRestAdminUserId())
+}
+
+async function liveEnginePost(command, body, { sdkAppId, secretKey, adminUserId }) {
+  const domain = (process.env.IM_REST_API_DOMAIN || DEFAULT_DOMAIN).replace(/\/$/, '')
+  const api = new TLSSigApi(Number(sdkAppId), secretKey)
+  const userSig = api.genSig(String(adminUserId), 180)
+  const random = Math.floor(Math.random() * 4294967295)
+  const qs = new URLSearchParams({
+    sdkappid: String(sdkAppId),
+    identifier: String(adminUserId),
+    usersig: userSig,
+    random: String(random),
+    contenttype: 'json',
+  })
+  const url = `${domain}/v4/live_engine_http_srv/${command}?${qs.toString()}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  })
+  const text = await res.text()
+  let json = {}
+  try {
+    json = JSON.parse(text)
+  } catch {
+    /* noop */
+  }
+  if (!res.ok) {
+    const err = new Error(`TUILive REST HTTP ${res.status}: ${text.slice(0, 200)}`)
+    err.statusCode = 502
+    throw err
+  }
+  if (json.ErrorCode !== 0 && json.ErrorCode != null) {
+    const err = new Error(json.ErrorInfo || `TUILive ErrorCode=${json.ErrorCode}`)
+    err.statusCode = 502
+    err.tuiLiveCode = json.ErrorCode
+    throw err
+  }
+  return json
+}
+
+/**
+ * @param {{ sdkAppId: string|number, secretKey: string, adminUserId?: string, liveId: string, title: string, ownerAccount: string }} p
+ */
+export async function createTuiLiveRoom(p) {
+  const adminUserId = p.adminUserId || getTuiLiveRestAdminUserId()
+  if (!adminUserId) {
+    const err = new Error('未配置 TUILIVE_REST_ADMIN_USER_ID 或 IM_REST_ADMIN_USER_ID')
+    err.statusCode = 503
+    throw err
+  }
+  return liveEnginePost(
+    'create_room',
+    {
+      RoomInfo: {
+        RoomId: String(p.liveId),
+        RoomType: 'Live',
+        RoomName: String(p.title || p.liveId).slice(0, 100),
+        Owner_Account: String(p.ownerAccount),
+        IsPublicVisible: true,
+        IsSeatEnabled: true,
+        MaxSeatCount: 1,
+        TakeSeatMode: 'FreeToTake',
+        SeatTemplate: 'VideoDynamicGrid9Seats',
+      },
+    },
+    { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
+  )
+}
+
+/**
+ * @param {{ sdkAppId: string|number, secretKey: string, adminUserId?: string, liveId: string }} p
+ */
+export async function destroyTuiLiveRoom(p) {
+  const adminUserId = p.adminUserId || getTuiLiveRestAdminUserId()
+  if (!adminUserId) {
+    const err = new Error('未配置 TUILIVE_REST_ADMIN_USER_ID 或 IM_REST_ADMIN_USER_ID')
+    err.statusCode = 503
+    throw err
+  }
+  return liveEnginePost(
+    'destroy_room',
+    { RoomId: String(p.liveId) },
+    { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
+  )
+}

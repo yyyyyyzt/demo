@@ -12,6 +12,7 @@ import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
 import { getIvhEnvDiagnostics } from './ivhApaas.mjs'
 import { closeRoomIvhSession } from './ivhPipeline.mjs'
+import { isTuiLiveRestConfigured } from './tuiLiveRest.mjs'
 import { disposeStudioRoom, mountStudioRoutes } from './studio.mjs'
 
 const require = createRequire(import.meta.url)
@@ -116,6 +117,9 @@ app.get('/api/health', (_req, res) => {
     archiveLegacyEnabled: ARCHIVE_LEGACY,
     deliveryDemo: true,
     studioApi: true,
+    tuiLiveRestConfigured: isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY),
+    tuiLiveRestAdminHint:
+      '直播管理后台需 TUILIVE_REST_ADMIN_USER_ID（或 IM_REST_ADMIN_USER_ID）+ 播控页 startLive',
   })
 })
 
@@ -287,6 +291,7 @@ mountStudioRoutes(app, {
   saveRooms,
   genUserSig,
   TRTC_SDK_APP_ID,
+  TRTC_SECRET_KEY,
   jobs,
   roomActiveJob,
 })
