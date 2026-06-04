@@ -58,6 +58,7 @@ GET  /api/health
 GET  /api/rooms
 POST /api/rooms
 GET  /api/rooms/:id
+DELETE /api/rooms/:id
 POST /api/rooms/:id/token
 
 POST /api/rooms/:id/studio/start

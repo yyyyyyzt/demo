@@ -12,6 +12,7 @@ import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
 import { getIvhEnvDiagnostics } from './ivhApaas.mjs'
 import { closeRoomIvhSession } from './ivhPipeline.mjs'
+import { disposeStudioRoom, mountStudioRoutes } from './studio.mjs'
 
 const require = createRequire(import.meta.url)
 const { Api: TLSSigApi } = require('tls-sig-api-v2')
@@ -180,6 +181,39 @@ app.get('/api/rooms/:id', (req, res) => {
   res.json(room)
 })
 
+async function purgeRoomRuntimeState(roomInternalId) {
+  try {
+    await closeRoomIvhSession(roomInternalId)
+  } catch {
+    /* noop */
+  }
+  const jobId = roomActiveJob.get(roomInternalId)
+  if (jobId) jobs.delete(jobId)
+  roomActiveJob.delete(roomInternalId)
+  for (const [jid, job] of jobs) {
+    if (job.roomId === roomInternalId) jobs.delete(jid)
+  }
+  pendingAudienceComments.delete(roomInternalId)
+  publicAudienceMessages.delete(roomInternalId)
+  disposeStudioRoom(roomInternalId)
+}
+
+app.delete('/api/rooms/:id', async (req, res) => {
+  const rooms = loadRooms()
+  const idx = rooms.findIndex((r) => r.id === req.params.id)
+  if (idx === -1) {
+    res.status(404).json({ error: '房间不存在' })
+    return
+  }
+  const [room] = rooms.splice(idx, 1)
+  await purgeRoomRuntimeState(room.id)
+  saveRooms(rooms)
+  res.json({
+    ok: true,
+    removed: { id: room.id, liveId: room.liveId, title: room.title },
+  })
+})
+
 app.post('/api/rooms/:id/token', (req, res) => {
   try {
     const rooms = loadRooms()
@@ -248,7 +282,6 @@ async function stopRoomDigitalHuman(req, res) {
   res.json({ ok: true, ...result, job: job || null })
 }
 
-const { mountStudioRoutes } = await import('./studio.mjs')
 mountStudioRoutes(app, {
   loadRooms,
   saveRooms,

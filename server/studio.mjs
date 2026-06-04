@@ -27,6 +27,11 @@ function getCommentList(roomId) {
   return studioCommentsByRoom.get(roomId)
 }
 
+/** 解散房间时清理内存中的评论队列 */
+export function disposeStudioRoom(roomInternalId) {
+  studioCommentsByRoom.delete(roomInternalId)
+}
+
 function findRoom(loadRooms, roomParamId) {
   const rooms = loadRooms()
   const room = rooms.find((r) => r.id === roomParamId)

@@ -34,11 +34,19 @@
           <div class="room__actions">
             <RouterLink class="btn btn--sm btn--primary" :to="`/studio/${r.id}`">开始数字人播报直播</RouterLink>
             <a
-              class="btn btn--sm"
+              class="btn btn--sm btn--secondary"
               :href="`/monitor/${r.id}`"
               target="_blank"
               rel="noopener noreferrer"
             >监控窗口</a>
+            <button
+              type="button"
+              class="btn btn--sm btn--danger"
+              :disabled="dissolvingId === r.id"
+              @click="dissolveRoom(r)"
+            >
+              {{ dissolvingId === r.id ? '解散中…' : '解散直播间' }}
+            </button>
           </div>
         </li>
       </ul>
@@ -52,6 +60,7 @@ import { ref, onMounted } from 'vue'
 const rooms = ref([])
 const loading = ref(true)
 const creating = ref(false)
+const dissolvingId = ref('')
 const newTitle = ref('')
 const topError = ref('')
 
@@ -87,6 +96,27 @@ async function createRoom() {
     topError.value = e?.message || String(e)
   } finally {
     creating.value = false
+  }
+}
+
+async function dissolveRoom(room) {
+  const liveHint = room.liveId ? `\nliveId：${room.liveId}` : ''
+  const ok = window.confirm(
+    `确定解散直播间「${room.title}」？${liveHint}\n\n将结束数智人会话、清除评论与任务记录，且不可恢复。`,
+  )
+  if (!ok) return
+
+  dissolvingId.value = room.id
+  topError.value = ''
+  try {
+    const res = await fetch(`/api/rooms/${room.id}`, { method: 'DELETE' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || res.statusText)
+    await loadRooms()
+  } catch (e) {
+    topError.value = e?.message || String(e)
+  } finally {
+    dissolvingId.value = ''
   }
 }
 
@@ -191,6 +221,22 @@ onMounted(loadRooms)
 .btn--ghost {
   border-style: dashed;
   opacity: 0.9;
+}
+
+.btn--secondary {
+  border-color: rgba(154, 212, 255, 0.45);
+  background: rgba(79, 141, 255, 0.15);
+  color: #d6ebff;
+}
+
+.btn--danger {
+  border-color: rgba(255, 120, 117, 0.55);
+  background: rgba(255, 77, 79, 0.22);
+  color: #ffccc7;
+}
+
+button.btn {
+  font-family: inherit;
 }
 
 .err {
