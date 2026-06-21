@@ -46,6 +46,20 @@ rtmp://rtmp.rtc.qq.com/push/{liveId}?sdkappid={SDKAppID}&userid={obs_robot_*}&us
 
 > 约束：观看端必须用**相同字符串房间号**进房才能看到该路 RTMP 流。本项目所有端进房都用 `strRoomId = liveId`，已满足。
 
+## 二·补、为什么管理后台/真实观众看得到（机器人上麦）
+
+官方观众端与直播管理后台默认**只拉「麦上主播流」**。OBS 以机器人 `obs_robot_{liveId}` 身份 RTMP 推流，只是房间内的一路 TRTC 流，若机器人**未上麦**，官方后台不会把它当主播渲染（现象：房间里只看到管理员、看不到画面）。
+
+因此「开始直播」时服务端会自动执行（`server/studio.mjs` 生产模式）：
+
+1. `add_robot`（`live_engine_http_srv/add_robot`）：把 `obs_robot_{liveId}` 加入房间。
+2. `pick_user_on_seat`（`room_engine_http_mic/pick_user_on_seat`，麦位号默认 0，可用 `TUILIVE_ROBOT_SEAT_INDEX` 配置）：让机器人**上麦**成为主播。
+
+「结束直播」时 `kick_user_off_seat` 让机器人下麦。这样官方管理后台与真实观众端都能看到数字人画面。
+文档：[输入媒体流进房](https://www.tencentcloud.com/zh/document/product/1071/76707)、[用户上麦](https://cloud.tencent.com/document/product/647/60718)。
+
+> 房主 ID 即设为机器人 ID（`obs_robot_{liveId}`，创建房间时已 `account_import` 导入），符合官方「房主 ID 设为机器人 UserID」的推荐做法。
+
 ## 三、OBS 操作步骤
 
 1. **添加媒体源**：来源 → 媒体源 → 取消「本地文件」→ 输入①拉流地址（FLV/RTMP）。

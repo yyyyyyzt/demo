@@ -17,6 +17,12 @@ import {
 import { isIvhConfigured } from './ivhApaas.mjs'
 import { buildObsPushEndpoint, obsRobotUserId } from './trtcRtmp.mjs'
 import {
+  addTuiLiveRobot,
+  isTuiLiveRestConfigured,
+  kickRobotOffSeat,
+  pickRobotOnSeat,
+} from './tuiLiveRest.mjs'
+import {
   imForbidSendMsg,
   imRecallGroupMsg,
   imSendGroupText,
@@ -506,6 +512,30 @@ export function mountStudioRoutes(app, ctx) {
     }
 
     // 房间登记在「创建房间」时已完成（管理后台同源），开播不再重复 create_room。
+    // 生产模式：让 OBS 推流机器人「进房 + 上麦」，否则官方观众端/管理后台只拉麦上主播流、看不到 RTMP 画面。
+    let seat = { onSeat: false }
+    if (mode === 'production' && isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
+      const seatIndex = Number(process.env.TUILIVE_ROBOT_SEAT_INDEX || 0)
+      try {
+        await addTuiLiveRobot({
+          sdkAppId: TRTC_SDK_APP_ID,
+          secretKey: TRTC_SECRET_KEY,
+          liveId: room.liveId,
+          robotId: anchorUserId,
+        })
+        await pickRobotOnSeat({
+          sdkAppId: TRTC_SDK_APP_ID,
+          secretKey: TRTC_SECRET_KEY,
+          liveId: room.liveId,
+          account: anchorUserId,
+          index: seatIndex,
+        })
+        seat = { onSeat: true, index: seatIndex }
+      } catch (e) {
+        seat = { onSeat: false, error: e?.message || String(e) }
+      }
+    }
+
     const endpoints = {
       active: true,
       mode,
@@ -515,6 +545,7 @@ export function mountStudioRoutes(app, ctx) {
       pushUrl: obs.pushUrl,
       backupPushUrl: obs.backupPushUrl,
       pushSignError: obsSignError,
+      seat,
       pullStreamAddr: null,
       pullStreamFlv: null,
       pullStreamHls: null,
@@ -591,7 +622,20 @@ export function mountStudioRoutes(app, ctx) {
     obsEndpointsByRoom.delete(room.id)
     setRoomBroadcastStatus(rooms, room, 'idle', saveRooms)
 
-    // 结束直播仅关闭数智人会话；直播间登记保留在管理后台，解散房间时才 destroy_room。
+    // 让推流机器人下麦；直播间登记保留在管理后台，解散房间时才 destroy_room。
+    if (isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
+      try {
+        await kickRobotOffSeat({
+          sdkAppId: TRTC_SDK_APP_ID,
+          secretKey: TRTC_SECRET_KEY,
+          liveId: room.liveId,
+          account: anchorOwnerAccount(room.liveId),
+        })
+      } catch {
+        /* 机器人可能本就不在麦位，忽略 */
+      }
+    }
+
     res.json({ ok: true, ...result, job: job || null })
   })
 }

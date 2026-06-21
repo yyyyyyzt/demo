@@ -17,7 +17,7 @@ export function isTuiLiveRestConfigured(sdkAppId, secretKey) {
   return Boolean(sdkAppId && secretKey && getTuiLiveRestAdminUserId())
 }
 
-async function liveEnginePost(command, body, { sdkAppId, secretKey, adminUserId }) {
+async function restPost(service, command, body, { sdkAppId, secretKey, adminUserId }) {
   const domain = (process.env.IM_REST_API_DOMAIN || DEFAULT_DOMAIN).replace(/\/$/, '')
   const api = new TLSSigApi(Number(sdkAppId), secretKey)
   const userSig = api.genSig(String(adminUserId), 180)
@@ -29,7 +29,7 @@ async function liveEnginePost(command, body, { sdkAppId, secretKey, adminUserId 
     random: String(random),
     contenttype: 'json',
   })
-  const url = `${domain}/v4/live_engine_http_srv/${command}?${qs.toString()}`
+  const url = `${domain}/v4/${service}/${command}?${qs.toString()}`
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -59,6 +59,10 @@ async function liveEnginePost(command, body, { sdkAppId, secretKey, adminUserId 
     throw err
   }
   return json
+}
+
+function liveEnginePost(command, body, ctx) {
+  return restPost('live_engine_http_srv', command, body, ctx)
 }
 
 /**
@@ -133,6 +137,63 @@ export async function destroyTuiLiveRoom(p) {
   return liveEnginePost(
     'destroy_room',
     { RoomId: String(p.liveId) },
+    { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
+  )
+}
+
+/**
+ * 在直播间内添加机器人（机器人账号需为已导入账号）。
+ * 文档：https://cloud.tencent.com/document/product/647/117783
+ * @param {{ sdkAppId:string|number, secretKey:string, adminUserId?:string, liveId:string, robotId:string }} p
+ */
+export async function addTuiLiveRobot(p) {
+  const adminUserId = p.adminUserId || getTuiLiveRestAdminUserId()
+  try {
+    return await liveEnginePost(
+      'add_robot',
+      { RoomId: String(p.liveId), RobotList_Account: [String(p.robotId)] },
+      { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
+    )
+  } catch (e) {
+    // 机器人已在房间内视为成功
+    if (/exist|already/i.test(e.message || '')) return { ErrorCode: 0, reused: true }
+    throw e
+  }
+}
+
+/**
+ * 让机器人/成员上麦（观众端默认只拉麦上主播流，机器人 RTMP 推流需上麦才可被看到）。
+ * 文档：https://cloud.tencent.com/document/product/647/60718
+ * @param {{ sdkAppId:string|number, secretKey:string, adminUserId?:string, liveId:string, account:string, index?:number }} p
+ */
+export async function pickRobotOnSeat(p) {
+  const adminUserId = p.adminUserId || getTuiLiveRestAdminUserId()
+  const index = Number.isFinite(Number(p.index)) ? Number(p.index) : 0
+  try {
+    return await restPost(
+      'room_engine_http_mic',
+      'pick_user_on_seat',
+      { RoomId: String(p.liveId), Member_Account: String(p.account), Index: index },
+      { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
+    )
+  } catch (e) {
+    // 已在麦位上视为成功
+    if (/already|on seat|seated/i.test(e.message || '')) return { ErrorCode: 0, reused: true }
+    throw e
+  }
+}
+
+/**
+ * 让机器人/成员下麦。
+ * 文档：https://cloud.tencent.com/document/product/647/60719
+ * @param {{ sdkAppId:string|number, secretKey:string, adminUserId?:string, liveId:string, account:string }} p
+ */
+export async function kickRobotOffSeat(p) {
+  const adminUserId = p.adminUserId || getTuiLiveRestAdminUserId()
+  return restPost(
+    'room_engine_http_mic',
+    'kick_user_off_seat',
+    { RoomId: String(p.liveId), Member_Account: String(p.account) },
     { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
   )
 }

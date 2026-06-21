@@ -148,6 +148,13 @@
 
         <div v-if="obs.active" class="obs-panel">
           <h3 class="obs-panel__title">OBS 拉流转推地址</h3>
+          <p v-if="obs.seat" class="seat-status" :class="{ 'seat-status--ok': obs.seat.onSeat }">
+            {{
+              obs.seat.onSeat
+                ? '✓ 推流机器人已上麦：管理后台与官方观众端可见'
+                : `推流机器人未上麦：${obs.seat.error || '未配置 TUILiveKit 管理员'}（仅 demo 预览可见）`
+            }}
+          </p>
           <div class="obs-field">
             <label>① 拉流地址（OBS 媒体源输入 · 数字人原始画面）</label>
             <div class="obs-copy">
@@ -725,6 +732,18 @@ onUnmounted(() => {
 .obs-panel__title {
   margin: 0 0 10px;
   font-size: 14px;
+}
+.seat-status {
+  margin: 0 0 10px;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(250, 173, 20, 0.16);
+  color: #ffd591;
+}
+.seat-status--ok {
+  background: rgba(82, 196, 26, 0.18);
+  color: #b7eb8f;
 }
 .obs-field {
   margin-bottom: 12px;
