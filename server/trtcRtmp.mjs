@@ -13,10 +13,10 @@
 const PRIMARY_DOMAIN = 'rtmp.rtc.qq.com'
 const BACKUP_DOMAIN = 'rtmp.cloud-rtc.com'
 
-/** OBS 推流端固定使用的机器人/主播 userId（与房间 liveId 绑定，全局唯一） */
+/** OBS 推流端固定使用的机器人/主播 userId（与房间 liveId 绑定，全局唯一；≤32 以符合 IM UserID 限制） */
 export function obsRobotUserId(liveId) {
-  const safe = String(liveId).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40)
-  return `obs_robot_${safe}`.slice(0, 60)
+  const safe = String(liveId).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 22)
+  return `obs_robot_${safe}`.slice(0, 32)
 }
 
 function buildPushUrl(domain, { sdkAppId, liveId, userId, userSig }) {

@@ -62,6 +62,33 @@ async function imPost(command, body, { sdkAppId, secretKey, adminUserId }) {
 }
 
 /**
+ * 导入单个 IM 账号（幂等：已存在视为成功）。
+ * TUILiveKit create_room 的 Owner_Account 必须是已注册的 IM 账号，否则报 invalid owner account。
+ * 文档：https://cloud.tencent.com/document/product/269/1608
+ * @param {{ sdkAppId:string|number, secretKey:string, adminUserId?:string, userId:string, nick?:string, faceUrl?:string }} p
+ */
+export async function imImportAccount(p) {
+  const adminUserId = p.adminUserId || getImRestAdminUserId()
+  try {
+    return await imPost(
+      'im_open_login_svc/account_import',
+      {
+        UserID: String(p.userId),
+        Nick: String(p.nick || p.userId).slice(0, 32),
+        FaceUrl: String(p.faceUrl || ''),
+      },
+      { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
+    )
+  } catch (e) {
+    // 账号已存在（ErrorCode 70169 等）视为成功
+    if (e.imCode === 70169 || /already.*import|exist/i.test(e.message || '')) {
+      return { ErrorCode: 0, reused: true }
+    }
+    throw e
+  }
+}
+
+/**
  * 在群内以某用户身份发送文本，返回 MsgSeq（用于后续撤回）。
  * @param {{ sdkAppId:string|number, secretKey:string, adminUserId?:string, groupId:string, fromAccount:string, text:string, cloudCustomData?:Record<string,unknown> }} p
  * @returns {Promise<{ MsgSeq:number, MsgTime:number }>}

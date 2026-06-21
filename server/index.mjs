@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
 import { getIvhEnvDiagnostics, isIvhConfigured, ivhCloseSession, ivhListSessionsOfUin } from './ivhApaas.mjs'
+import { imImportAccount } from './imRest.mjs'
 import { closeRoomIvhSession, getKnownIvhSessions } from './ivhPipeline.mjs'
 import {
   createTuiLiveRoom,
@@ -176,6 +177,13 @@ app.post('/api/rooms', async (req, res) => {
   let cloudError = null
   if (isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
     try {
+      // create_room 的 Owner_Account 必须是已注册 IM 账号，先导入房主账号（幂等）。
+      await imImportAccount({
+        sdkAppId: TRTC_SDK_APP_ID,
+        secretKey: TRTC_SECRET_KEY,
+        userId: ownerAccount,
+        nick: title,
+      })
       await createTuiLiveRoom({
         sdkAppId: TRTC_SDK_APP_ID,
         secretKey: TRTC_SECRET_KEY,
