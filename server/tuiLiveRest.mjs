@@ -71,20 +71,31 @@ export async function createTuiLiveRoom(p) {
     err.statusCode = 503
     throw err
   }
-  return liveEnginePost(
-    'create_room',
-    {
-      RoomInfo: {
-        RoomId: String(p.liveId),
-        RoomType: 'Live',
-        RoomName: String(p.title || p.liveId).slice(0, 100),
-        Owner_Account: String(p.ownerAccount),
-        IsPublicVisible: true,
-        IsSeatEnabled: false,
+  // 新版 create_room：SeatTemplate 必填；部分应用版本还要求 IsUnlimitedRoomEnabled。
+  // 文档：https://cloud.tencent.com/document/product/647/110036
+  const seatTemplate = process.env.TUILIVE_SEAT_TEMPLATE || 'VideoDynamicGrid9Seats'
+  try {
+    return await liveEnginePost(
+      'create_room',
+      {
+        RoomInfo: {
+          RoomId: String(p.liveId),
+          RoomType: 'Live',
+          RoomName: String(p.title || p.liveId).slice(0, 100),
+          Owner_Account: String(p.ownerAccount),
+          SeatTemplate: seatTemplate,
+          TakeSeatMode: 'ApplyToTake',
+          IsPublicVisible: true,
+          IsUnlimitedRoomEnabled: true,
+        },
       },
-    },
-    { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
-  )
+      { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
+    )
+  } catch (e) {
+    // 100010：房间已存在且 Owner 相同，可直接复用，视为成功
+    if (e.tuiLiveCode === 100010) return { ErrorCode: 0, reused: true }
+    throw e
+  }
 }
 
 /**
