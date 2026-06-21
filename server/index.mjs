@@ -240,10 +240,14 @@ app.post('/api/rooms/:id/token', (req, res) => {
 
     const safeLiveKey = String(room.liveId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 36)
 
+    const slotRaw = String(req.body?.slot || '').trim().toLowerCase()
+    const slot = slotRaw === 'a' || slotRaw === 'b' ? slotRaw : ''
+
     let userId = String(req.body?.userId || '').trim()
     if (!userId) {
-      if (role === 'anchor') userId = `anchor_${safeLiveKey}`.slice(0, 48)
-      else if (role === 'moderator') userId = `mod_${safeLiveKey}`.slice(0, 48)
+      if (role === 'anchor') userId = `obs_robot_${safeLiveKey}`.slice(0, 48)
+      else if (role === 'moderator')
+        userId = (slot ? `mod_${slot}_${safeLiveKey}` : `mod_${safeLiveKey}`).slice(0, 48)
       else if (role === 'monitor') userId = `monitor_${uuidv4().replace(/-/g, '').slice(0, 8)}`
       else if (role === 'preview') userId = `studio_prev_${uuidv4().replace(/-/g, '').slice(0, 10)}`
       else userId = `viewer_${uuidv4().replace(/-/g, '').slice(0, 12)}`
@@ -255,6 +259,7 @@ app.post('/api/rooms/:id/token', (req, res) => {
       userId,
       userSig,
       role,
+      slot: slot || null,
       liveId: room.liveId,
       roomTitle: room.title,
       expireSeconds: expire,

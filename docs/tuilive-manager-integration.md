@@ -1,54 +1,44 @@
 # 在腾讯云「直播管理系统」中看到本 Demo 直播间
 
-文档：[直播管理系统（Vue3）](https://cloud.tencent.com/document/product/647/123012)
+文档：[直播管理系统（Vue3）](https://cloud.tencent.com/document/product/647/123012)、[TUILiveKit_Manager](https://github.com/Tencent-RTC/TUILiveKit_Manager)
 
-## 为什么之前看不到？
+## 现在 Demo 的做法
 
-本 Demo 数智人链路走的是 **外部 TRTC 进房**（`TrtcStrRoomId = liveId`），若只在播控页用原生 `trtc-sdk-v5` `enterRoom`，**不会**在 TUILiveKit 直播列表/监控里登记为一场「直播」。
+开播时（`POST /api/rooms/:id/studio/start`）服务端可选调用 TUILiveKit **`create_room` REST**（`server/tuiLiveRest.mjs`），在云端创建一个 Live 房间，`RoomId = liveId`、`Owner_Account = obs_robot_{liveId}`。这样：
 
-腾讯云直播管理后台列出的，是走 **TUILiveKit 直播引擎** 创建并 `startLive` 的房间，而不是任意 TRTC 字符串房间号。
+- 在腾讯云直播管理后台 / 自部署的 TUILiveKit_Manager 中，用 **`liveId`** 即可检索到该直播间。
+- 该房间对应的 **IM 群 ID 也为 `liveId`**，评论链路与撤回/禁言都基于该群（见 [IM 评论链路](im-comment-moderation.md)）。
 
-## 现在 Demo 的做法（已接入）
+结束直播时调用 `destroy_room`（可选）。
 
-| 步骤 | 位置 | 作用 |
-|------|------|------|
-| 1 | 服务端 `studio/start` | 可选调用 `create_room` REST，在云端创建 Live 房间 |
-| 2 | 播控页「开始直播」 | `login` + `startLive({ liveId, liveName })`（与 `liveId` 一致） |
-| 3 | 服务端 `studio/start` | 数智人 `createsession` 进同一 `liveId` 推流 |
-| 4 | 结束直播 | 客户端 `endLive` + 服务端 `destroy_room`（可选） |
+## 与画面可见性的关系
 
-在管理后台用 **`liveId`**（如 `live_xxxxxxxxxxxx`）搜索，应能在 **直播间管理 / 直播监控** 中看到。
+管理后台列出的是**直播会话元数据**；画面是否可见取决于是否有流推入该房间：
+
+- 生产模式：OBS 把合成画面 RTMP 推回 `liveId`，房间内即有主播流。
+- 直连模式：数智人直接进房推流。
+
+本项目观众端不依赖 TUILiveKit `LiveView`（只渲染 anchor 流），而是原生 `trtc-sdk-v5` 订阅房间内任意远端视频，因此 OBS/数智人推的流都能看到（原因见 [trtc-ivh-integration](trtc-ivh-integration.md) 第三节）。
 
 ## 环境配置
 
-在 `.env` 中增加（与 TRTC 同应用、**App 管理员**账号）：
-
 ```bash
-TUILIVE_REST_ADMIN_USER_ID=你的管理员userId
-# 或复用 IM_REST_ADMIN_USER_ID=
+# 与 TRTC 同一 SDKAppID 的 App 管理员账号
+IM_REST_ADMIN_USER_ID=你的管理员userId
+# 或 TUILIVE_REST_ADMIN_USER_ID=
+# TUILIVE_REGISTER_ON_STUDIO=0  # 设 0 则开播不调用 create_room
 ```
-
-并确保已 [开通 TUILiveKit](https://cloud.tencent.com/document/product/647/105439)。
 
 自检：
 
 ```bash
-curl -s http://127.0.0.1:3001/api/health | jq '.tuiLiveRestConfigured'
+curl -s http://127.0.0.1:3001/api/health | grep -o '"tuiLiveRestConfigured":[a-z]*'
 ```
-
-## 管理后台对接方式（官方）
-
-若需完整运营能力（礼物、封禁、多路监播等），可部署官方开源管理端：
-
-- 仓库：https://github.com/Tencent-RTC/TUILiveKit_Manager  
-- 配置同一 `SDKAppID`、管理员 `userId` / `UserSig`  
-- 与本 Demo 使用相同 `liveId` 即可在同一后台看到房间
 
 ## 常见问题
 
 | 现象 | 处理 |
 |------|------|
-| 仍看不到 | 确认播控页已点「开始直播」且未报错；`startLive` 的 `liveId` 须与房间 `liveId` 完全一致 |
-| create_room 报错 | 房间可能已存在，可忽略或先解散；检查管理员账号是否为 App 管理员 |
-| 有房间无画面 | 管理后台看的是直播会话；数智人画面在播控预览，需数智人已进房推流 |
-| 与 IVH 冲突 | 先 `startLive` 再拉数智人；勿用两个不同 SDK 以同一 `anchor_*` 重复进房 |
+| 后台搜不到房间 | 确认已配置 App 管理员、已开通 TUILiveKit；`create_room` 的 `RoomId` 须等于 `liveId` |
+| create_room 报「已存在」| 房间已创建，可忽略或先解散 |
+| 有房间无画面 | 生产模式需 OBS 已推流；直连模式需数智人已进房 |

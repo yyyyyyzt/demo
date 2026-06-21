@@ -1,6 +1,7 @@
 import {
   isIvhConfigured,
   ivhCloseSession,
+  ivhCreateRtmpSession,
   ivhCreateTrtcSession,
   ivhSendText,
   ivhStartSession,
@@ -70,7 +71,10 @@ export async function broadcastText(sessionId, text) {
 
 /**
  * 若房间已有有效会话则复用；否则 createsession → startsession。
- * @returns {{ sessionId: string, ivhUserId: string, reused: boolean, playStreamAddr?: string }}
+ * @param {{ mode?: 'trtc' | 'rtmp', sessionSuffix?: string }} [options]
+ *   - mode='trtc'（默认）：数智人直接进 TRTC 直播间推流（直连/快速验证模式）。
+ *   - mode='rtmp'：数智人产出一路可拉取的播放地址（PlayStreamAddr），供 OBS 拉流转推（生产模式）。
+ * @returns {{ sessionId: string, ivhUserId: string, reused: boolean, playStreamAddr?: string, mode: string }}
  */
 export async function ensureIvhSession(room, deps, options = {}) {
   if (!isIvhConfigured()) {
@@ -78,6 +82,8 @@ export async function ensureIvhSession(room, deps, options = {}) {
     err.statusCode = 503
     throw err
   }
+
+  const mode = options.mode === 'rtmp' ? 'rtmp' : 'trtc'
 
   const existingId = lastOpenIvhSessionByRoomInternalId.get(room.id)
   if (existingId && (await isSessionStillActive(existingId))) {
@@ -88,6 +94,7 @@ export async function ensureIvhSession(room, deps, options = {}) {
       ivhVirtualmanUserId: meta.ivhVirtualmanUserId || meta.ivhUserId,
       reused: true,
       playStreamAddr: meta.playStreamAddr || null,
+      mode: meta.mode || mode,
     }
   }
   if (existingId) {
@@ -101,16 +108,24 @@ export async function ensureIvhSession(room, deps, options = {}) {
     String(process.env.IVH_TRTC_USER_ID || '').trim() ||
     `vh_${String(room.liveId).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 24)}`
   const ivhUserId = `${baseUid}_${suffix}`.slice(0, 48)
-  const trtcUserSig = deps.genUserSig(ivhUserId)
 
-  const createJson = await ivhCreateTrtcSession({
-    virtualmanProjectId: projectId,
-    ivhUserId,
-    trtcAppId: deps.trtcSdkAppId,
-    trtcStrRoomId: room.liveId,
-    trtcUserSig,
-    privateMapKey: process.env.IVH_TRTC_PRIVATE_MAP_KEY || 'dummy',
-  })
+  let createJson
+  if (mode === 'rtmp') {
+    createJson = await ivhCreateRtmpSession({
+      virtualmanProjectId: projectId,
+      ivhUserId,
+    })
+  } else {
+    const trtcUserSig = deps.genUserSig(ivhUserId)
+    createJson = await ivhCreateTrtcSession({
+      virtualmanProjectId: projectId,
+      ivhUserId,
+      trtcAppId: deps.trtcSdkAppId,
+      trtcStrRoomId: room.liveId,
+      trtcUserSig,
+      privateMapKey: process.env.IVH_TRTC_PRIVATE_MAP_KEY || 'dummy',
+    })
+  }
 
   const pl0 = createJson.Payload || {}
   const sessionId = pl0.SessionId || pl0.SessionID
@@ -136,6 +151,7 @@ export async function ensureIvhSession(room, deps, options = {}) {
     ivhUserId,
     ivhVirtualmanUserId: ivhUserId,
     playStreamAddr,
+    mode,
   })
 
   return {
@@ -144,6 +160,7 @@ export async function ensureIvhSession(room, deps, options = {}) {
     ivhVirtualmanUserId: ivhUserId,
     reused: false,
     playStreamAddr,
+    mode,
   }
 }
 

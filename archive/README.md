@@ -17,13 +17,16 @@
 | `examples/tencentLiveAudience.js` | `archive/examples/tencentLiveAudience.js` |
 | `playground/src/views/LegacyPlayground.vue` | `archive/playground-src/views/LegacyPlayground.vue` |
 | `playground/src/views/AnchorCanvasLegacy.vue` | `archive/playground-src/views/AnchorCanvasLegacy.vue` |
-| `playground/src/views/AudienceLive.vue` | `archive/playground-src/views/AudienceLive.vue` |
-| `server/imRest.mjs` | `archive/server/imRest.mjs` |
+| `playground/src/utils/useTuiLiveBroadcast.js` | `archive/playground-src/utils/useTuiLiveBroadcast.js` |
+| `server/imRest.mjs`（旧版仅发消息） | `archive/server/imRest.mjs` |
+
+> 说明：观众端 `AudienceLive.vue` 已**重新启用并重写**为生产标准版本（路由 `/live/:liveId`，原生 TRTC 订阅 + IM 评论），不再属于归档。
+> `useTuiLiveBroadcast.js`（TUILiveKit `startLive` 封装）在改为「OBS 拉流转推」后不再被主路径使用，移入归档。
+> 当前评论的 IM 能力请用 `server/imRest.mjs`（含撤回/禁言）。
 
 ## 已移除的主路由
 
-- `/` 观众 H5 → 已归档 `AudienceLive.vue`
 - `/legacy` 点赞调试页
 - `/anchor-canvas/:roomId` Canvas 遗留推流
 
-交付 Demo 主路径：`/admin` → `/studio/:roomId` → `/monitor/:roomId`。
+交付 Demo 主路径：`/admin` → `/studio/:roomId` → `/live/:liveId`（观众）→ `/monitor/:roomId`。

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AdminRooms from '../views/AdminRooms.vue'
 import StudioBroadcast from '../views/StudioBroadcast.vue'
 import MonitorLive from '../views/MonitorLive.vue'
+import AudienceLive from '../views/AudienceLive.vue'
 
 export const routes = [
   {
@@ -19,6 +20,12 @@ export const routes = [
     name: 'studio-broadcast',
     component: StudioBroadcast,
     meta: { title: '播控台' },
+  },
+  {
+    path: '/live/:liveId',
+    name: 'audience-live',
+    component: AudienceLive,
+    meta: { title: '直播间' },
   },
   {
     path: '/monitor/:roomId',

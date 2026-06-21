@@ -3,14 +3,11 @@
     <header class="admin__head">
       <h1 class="admin__title">数字人直播 · 管理台</h1>
       <p class="admin__sub">
-        最精简流程：1) 在此创建一个房间； 2) 进入「主播控制台」点「主播开播」→「发起数字人测试」；
-        3) 新开窗口打开「观众 H5」用同一 <code>liveId</code> 看播；观众「提交审核」的评论在主播页<strong>待审列表</strong>处理后再公区显示或送入数字人。主播页与观众页都用原生
-        <code>trtc-sdk-v5</code> 订阅房间内远端视频，能直接看到数字人画面（不依赖 TUILiveKit 的 anchor 流概念）。
+        生产标准演示流程：1) 创建直播间；2) 进入「评论播控台」点「开始直播」，复制
+        <strong>OBS 拉流/推流地址</strong>，由专业 OBS 拉数字人画面 → 抠像/虚拟背景/装修 → 推回直播间；
+        3) 把<strong>观众链接</strong>发给真实观众（手机即可观看）；4) 评论真走腾讯
+        <code>IM</code>，播控台可生成模型回复、二次编辑后播报，并支持撤回、禁言；多名管理员用各自链接协作。
       </p>
-      <nav class="admin__nav">
-        <RouterLink to="/">观众端</RouterLink>
-        <RouterLink to="/legacy">历史调试</RouterLink>
-      </nav>
     </header>
 
     <section class="card">
@@ -32,7 +29,7 @@
             <code>{{ r.liveId }}</code>
           </div>
           <div class="room__actions">
-            <RouterLink class="btn btn--sm btn--primary" :to="`/studio/${r.id}`">开始数字人播报直播</RouterLink>
+            <RouterLink class="btn btn--sm btn--primary" :to="`/studio/${r.id}`">进入播控台</RouterLink>
             <a
               class="btn btn--sm btn--secondary"
               :href="`/monitor/${r.id}`"
@@ -47,6 +44,24 @@
             >
               {{ dissolvingId === r.id ? '解散中…' : '解散直播间' }}
             </button>
+          </div>
+          <div class="room__links">
+            <div class="link-row">
+              <span class="link-row__label">观众链接</span>
+              <code class="link-row__url">{{ origin }}/live/{{ r.liveId }}</code>
+              <button type="button" class="btn btn--xs" @click="copyLink(`${origin}/live/${r.liveId}`)">复制</button>
+              <a class="btn btn--xs" :href="`/live/${r.liveId}`" target="_blank" rel="noopener noreferrer">打开</a>
+            </div>
+            <div class="link-row">
+              <span class="link-row__label">管理员 A</span>
+              <code class="link-row__url">{{ origin }}/studio/{{ r.id }}?mod=a</code>
+              <button type="button" class="btn btn--xs" @click="copyLink(`${origin}/studio/${r.id}?mod=a`)">复制</button>
+            </div>
+            <div class="link-row">
+              <span class="link-row__label">管理员 B</span>
+              <code class="link-row__url">{{ origin }}/studio/{{ r.id }}?mod=b</code>
+              <button type="button" class="btn btn--xs" @click="copyLink(`${origin}/studio/${r.id}?mod=b`)">复制</button>
+            </div>
           </div>
         </li>
       </ul>
@@ -63,6 +78,16 @@ const creating = ref(false)
 const dissolvingId = ref('')
 const newTitle = ref('')
 const topError = ref('')
+const origin = typeof window !== 'undefined' ? window.location.origin : ''
+
+async function copyLink(url) {
+  try {
+    await navigator.clipboard.writeText(url)
+    topError.value = ''
+  } catch {
+    /* 剪贴板不可用时忽略，用户可手动复制 */
+  }
+}
 
 async function loadRooms() {
   loading.value = true
@@ -216,6 +241,42 @@ onMounted(loadRooms)
 .btn--sm {
   padding: 6px 10px;
   font-size: 0.78rem;
+}
+
+.btn--xs {
+  padding: 3px 8px;
+  font-size: 0.72rem;
+}
+
+.room__links {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.link-row__label {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.6);
+  min-width: 4.5em;
+}
+
+.link-row__url {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.72rem;
+  color: #b8e0ff;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 4px 8px;
+  border-radius: 6px;
+  word-break: break-all;
 }
 
 .btn--ghost {
