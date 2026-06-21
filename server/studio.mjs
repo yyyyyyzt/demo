@@ -497,13 +497,19 @@ export function mountStudioRoutes(app, ctx) {
 
     const anchorUserId = anchorOwnerAccount(room.liveId)
 
-    // 计算 OBS 推流端点（把合成画面推回 TRTC 直播间）
-    const obs = buildObsPushEndpoint({
-      sdkAppId: TRTC_SDK_APP_ID,
-      liveId: room.liveId,
-      userId: anchorUserId,
-      genUserSig,
-    })
+    // 计算 OBS 推流端点（把合成画面推回 TRTC 直播间）；缺少 TRTC 密钥时降级。
+    let obs = { userId: anchorUserId, pushUrl: null, backupPushUrl: null }
+    let obsSignError = null
+    try {
+      obs = buildObsPushEndpoint({
+        sdkAppId: TRTC_SDK_APP_ID,
+        liveId: room.liveId,
+        userId: anchorUserId,
+        genUserSig,
+      })
+    } catch (e) {
+      obsSignError = e?.message || String(e)
+    }
 
     let tuiLive = { skipped: true }
     if (TUILIVE_REGISTER_ON_STUDIO && isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
@@ -529,6 +535,7 @@ export function mountStudioRoutes(app, ctx) {
       sdkAppId: Number(TRTC_SDK_APP_ID) || null,
       pushUrl: obs.pushUrl,
       backupPushUrl: obs.backupPushUrl,
+      pushSignError: obsSignError,
       pullStreamAddr: null,
       pullStreamFlv: null,
       pullStreamHls: null,

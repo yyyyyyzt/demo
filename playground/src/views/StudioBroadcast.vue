@@ -2,10 +2,11 @@
   <div class="studio">
     <header class="studio__head">
       <RouterLink class="back" to="/admin">← 管理台</RouterLink>
-      <h1 class="studio__title">播控台 · 数字人直播</h1>
-      <p v-if="room" class="studio__meta">
-        {{ room.title }} · <code>{{ room.liveId }}</code>
-      </p>
+      <h1 class="studio__title">
+        评论播控台 · 数字人直播
+        <span v-if="modName" class="mod-tag">管理员 {{ modName }}</span>
+      </h1>
+      <p v-if="room" class="studio__meta">{{ room.title }} · <code>{{ room.liveId }}</code></p>
       <p v-if="err" class="err">{{ err }}</p>
       <div class="studio__toolbar">
         <button
@@ -15,7 +16,7 @@
           :disabled="busy || loading"
           @click="onStartLive"
         >
-          {{ busy ? '启动中…' : '开始数字人播报直播' }}
+          {{ busy ? '启动中…' : '开始直播（生产 · OBS 拉流转推）' }}
         </button>
         <button v-else type="button" class="btn btn--danger" :disabled="busy" @click="onStopLive">
           {{ busy ? '结束中…' : '结束直播' }}
@@ -23,100 +24,150 @@
         <button
           type="button"
           class="btn btn--secondary"
-          :disabled="!liveActive || injecting"
+          :disabled="injecting"
           @click="onInjectComment"
         >
           {{ injecting ? '注入中…' : '注入测试评论' }}
         </button>
+        <span v-if="statusHint" class="hint">{{ statusHint }}</span>
       </div>
     </header>
 
     <p v-if="loading" class="muted">加载房间…</p>
 
     <div v-else-if="room" class="studio__grid">
+      <!-- 左：评论流 -->
       <section class="col col--comments">
-        <h2 class="col__title">评论列表</h2>
-        <p v-if="!comments.length" class="muted small">暂无评论，点击「注入测试评论」供演示。</p>
+        <h2 class="col__title">
+          评论区
+          <span v-if="!imConfigured" class="col__sub">（IM 未配置，撤回/禁言为本地标记）</span>
+        </h2>
+        <p v-if="!comments.length" class="muted small">暂无评论，点击「注入测试评论」演示。</p>
         <ul class="comment-list">
           <li
             v-for="c in comments"
             :key="c.id"
             class="comment-row"
-            :class="{ 'comment-row--selected': selectedId === c.id }"
+            :class="{
+              'comment-row--selected': selectedId === c.id,
+              'comment-row--recalled': c.recalled,
+            }"
             @click="selectComment(c)"
           >
             <div class="comment-row__head">
               <span class="comment-row__user">{{ c.senderLabel }}</span>
               <span class="comment-row__time">{{ formatShortTime(c.createdAt) }}</span>
               <span class="badge" :data-status="c.status">{{ statusLabel(c.status) }}</span>
+              <span v-if="c.claimedBy" class="badge badge--claim">{{ c.claimedBy }} 处理中</span>
+              <span v-if="c.muted" class="badge badge--mute">已禁言</span>
             </div>
             <p class="comment-row__text">{{ c.text }}</p>
             <div class="comment-row__actions" @click.stop>
               <button
                 type="button"
-                class="btn btn--sm"
-                :disabled="rowBusy === c.id"
+                class="btn btn--sm btn--primary"
+                :disabled="c.recalled || rowBusy === c.id"
                 @click="onGenerateReply(c)"
               >
-                {{ rowBusy === c.id ? '…' : '生成回复' }}
+                {{ rowBusy === c.id ? '…' : '模型回复' }}
               </button>
               <button
                 type="button"
-                class="btn btn--sm btn--primary"
-                :disabled="!canBroadcast(c) || rowBusy === `${c.id}-bc`"
-                @click="onBroadcast(c)"
+                class="btn btn--sm"
+                :disabled="c.recalled || rowBusy === `${c.id}-rc`"
+                @click="onRecall(c)"
               >
-                {{ rowBusy === `${c.id}-bc` ? '…' : '播报' }}
+                撤回
+              </button>
+              <button
+                type="button"
+                class="btn btn--sm btn--warn"
+                :disabled="rowBusy === `${c.id}-mt`"
+                @click="onMute(c)"
+              >
+                禁言
               </button>
             </div>
           </li>
         </ul>
       </section>
 
-      <section class="col col--stage">
-        <h2 class="col__title">数字人预览</h2>
-        <div class="stage-host">
-          <div ref="stageRef" class="stage" />
-          <p v-if="!hasRemoteVideo" class="stage-overlay">
-            {{
-              previewEntered
-                ? hasRemoteVideo
-                  ? ''
-                  : '等待数字人进房推流…'
-                : '开始直播后将建立预览连接'
-            }}
+      <!-- 中：模型回复二次加工 -->
+      <section class="col col--editor">
+        <h2 class="col__title">回复编辑 → 播报</h2>
+        <template v-if="selectedComment">
+          <p class="editor-origin">
+            <span class="editor-origin__user">{{ selectedComment.senderLabel }}：</span>
+            {{ selectedComment.text }}
           </p>
-        </div>
-        <div class="session-bar">
-          <p>
-            直播状态：<strong>{{ session.broadcastStatus || 'idle' }}</strong>
-            · Session：<code>{{ session.ivhSessionId || '—' }}</code>
-          </p>
-          <p v-if="session.ivhVirtualmanUserId" class="muted small">
-            远端 userId：<code>{{ session.ivhVirtualmanUserId }}</code>
-          </p>
-          <p v-if="session.job?.status" class="muted small">
-            任务：<code>{{ session.job.status }}</code>
-            <span v-if="session.job.ivhSessionKeptOpen"> · 会话保持</span>
-          </p>
-          <p v-if="tuiError" class="err small">TUILive：{{ tuiError }}</p>
-          <p v-if="previewError" class="err small">预览：{{ previewError }}</p>
-          <p v-if="remoteUsers.length" class="muted small">
-            房间内远端：<code>{{ remoteUsers.join(', ') }}</code>
-          </p>
-          <p v-if="statusHint" class="hint">{{ statusHint }}</p>
-        </div>
-
-        <div v-if="selectedComment" class="reply-box">
-          <h3 class="reply-box__title">回复编辑 · {{ selectedComment.senderLabel }}</h3>
-          <p class="muted small">原文：{{ selectedComment.text }}</p>
           <textarea
             v-model="replyDraft"
             class="reply-textarea"
-            rows="5"
-            placeholder="点击「生成回复」或手动输入播报文案"
+            rows="8"
+            placeholder="点击「模型回复」生成话术，可二次加工后再播报"
             @blur="onSaveDraft"
           />
+          <div class="editor-actions">
+            <button
+              type="button"
+              class="btn btn--sm"
+              :disabled="rowBusy === selectedComment.id"
+              @click="onGenerateReply(selectedComment)"
+            >
+              重新生成
+            </button>
+            <button
+              type="button"
+              class="btn btn--primary"
+              :disabled="!canBroadcast || broadcasting"
+              @click="onBroadcast"
+            >
+              {{ broadcasting ? '播报中…' : '播报给数字人' }}
+            </button>
+          </div>
+          <p v-if="replySourceHint" class="muted small">{{ replySourceHint }}</p>
+          <p v-if="!liveActive" class="hint">播报前需先「开始直播」建立数智人会话。</p>
+        </template>
+        <p v-else class="muted small">从左侧选择一条评论开始处理。</p>
+      </section>
+
+      <!-- 右：预览 + OBS 地址 -->
+      <section class="col col--stage">
+        <h2 class="col__title">直播预览</h2>
+        <div class="stage-host">
+          <div ref="stageRef" class="stage" />
+          <p v-if="!hasRemoteVideo" class="stage-overlay">
+            {{ previewEntered ? '等待画面…（生产模式需 OBS 推流后可见）' : '开始直播后建立预览' }}
+          </p>
+        </div>
+        <div class="session-bar">
+          <p>状态：<strong>{{ session.broadcastStatus || 'idle' }}</strong> · 模式：<code>{{ session.mode || obs.mode || '—' }}</code></p>
+          <p v-if="session.ivhSessionId" class="muted small">Session：<code>{{ session.ivhSessionId }}</code></p>
+          <p v-if="previewError" class="err small">预览：{{ previewError }}</p>
+        </div>
+
+        <div v-if="obs.active" class="obs-panel">
+          <h3 class="obs-panel__title">OBS 拉流转推地址</h3>
+          <div class="obs-field">
+            <label>① 拉流地址（OBS 媒体源输入 · 数字人原始画面）</label>
+            <div class="obs-copy">
+              <code>{{ obs.pullStreamAddr || obs.pullStreamFlv || '（未配置 IVH，占位）' }}</code>
+              <button type="button" class="btn btn--sm" @click="copy(obs.pullStreamFlv || obs.pullStreamAddr)">复制</button>
+            </div>
+            <p v-if="obs.pullStreamFlv" class="muted xsmall">FLV：{{ obs.pullStreamFlv }}</p>
+          </div>
+          <div class="obs-field">
+            <label>② 推流地址（OBS 推流输出 · 抠像/装修后推回直播间）</label>
+            <div class="obs-copy">
+              <code>{{ obs.pushUrl }}</code>
+              <button type="button" class="btn btn--sm" @click="copy(obs.pushUrl)">复制</button>
+            </div>
+            <p class="muted xsmall">备用域名：{{ obs.backupPushUrl }}</p>
+          </div>
+          <p class="muted xsmall">
+            流程：OBS 拉「①」→ 抠像/虚拟背景/装修 → 推「②」→ 观众端
+            <code>/live/{{ room.liveId }}</code> 可见。
+          </p>
         </div>
       </section>
     </div>
@@ -126,27 +177,25 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { useTuiLiveBroadcast } from '../utils/useTuiLiveBroadcast.js'
 import { useTrtcStage } from '../utils/useTrtcStage.js'
 
 const route = useRoute()
 const roomId = computed(() => route.params.roomId)
-
-const { status: tuiStatus, errorMessage: tuiError, enterAsAnchor, leave: leaveTuiLive } =
-  useTuiLiveBroadcast()
+const modName = computed(() => {
+  const m = String(route.query.mod || '').toLowerCase()
+  return m === 'a' || m === 'b' ? m.toUpperCase() : ''
+})
+const modSlot = computed(() => modName.value.toLowerCase())
 
 const {
   stageRef,
   status: previewStatus,
   errorMessage: previewError,
   hasRemoteVideo,
-  remoteUsers,
   enterRoom: enterPreviewRoom,
   exitRoom: exitPreviewRoom,
-  subscribeRemoteUser,
 } = useTrtcStage()
 
-const tuiLiveEntered = computed(() => tuiStatus.value === 'entered')
 const previewEntered = computed(() => previewStatus.value === 'entered')
 
 const room = ref(null)
@@ -154,31 +203,23 @@ const loading = ref(true)
 const err = ref('')
 const busy = ref(false)
 const injecting = ref(false)
+const broadcasting = ref(false)
 const rowBusy = ref('')
+const statusHint = ref('')
+const replySourceHint = ref('')
+const imConfigured = ref(true)
 
 const comments = ref([])
 const selectedId = ref(null)
 const replyDraft = ref('')
-const session = ref({
-  active: false,
-  broadcastStatus: 'idle',
-  ivhSessionId: null,
-  ivhVirtualmanUserId: null,
-  job: null,
-})
-const statusHint = ref('')
+const obs = ref({ active: false })
+const session = ref({ active: false, broadcastStatus: 'idle', mode: null, ivhSessionId: null })
 
 let pollTimer = null
 
 const liveActive = computed(() => session.value.broadcastStatus === 'live' || session.value.active)
-
 const selectedComment = computed(() => comments.value.find((c) => c.id === selectedId.value) || null)
-
-const INJECT_SAMPLES = [
-  '主播你好，今天有什么优惠活动吗？',
-  '请问这款产品的保修期是多久？',
-  '能再介绍一下核心功能吗？',
-]
+const canBroadcast = computed(() => Boolean(replyDraft.value.trim()))
 
 function formatShortTime(iso) {
   if (!iso) return ''
@@ -189,19 +230,22 @@ function formatShortTime(iso) {
     return iso
   }
 }
-
 function statusLabel(st) {
-  const map = { pending: '待处理', ready: '已生成', broadcasted: '已播报' }
-  return map[st] || st
+  return { pending: '待处理', ready: '已生成', broadcasted: '已播报', recalled: '已撤回' }[st] || st
 }
-
-function canBroadcast(c) {
-  return liveActive.value && (c.status === 'ready' || Boolean(c.replyDraft?.trim()))
-}
-
 function selectComment(c) {
   selectedId.value = c.id
   replyDraft.value = c.replyDraft || ''
+  replySourceHint.value = ''
+}
+async function copy(text) {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(String(text))
+    statusHint.value = '已复制到剪贴板'
+  } catch {
+    statusHint.value = '复制失败，请手动选择'
+  }
 }
 
 async function loadRoom() {
@@ -218,18 +262,19 @@ async function loadRoom() {
     loading.value = false
   }
 }
-
 async function refreshComments() {
   if (!room.value) return
   try {
     const r = await fetch(`/api/rooms/${room.value.id}/studio/comments`)
     const j = await r.json()
-    if (r.ok) comments.value = j.items || []
+    if (r.ok) {
+      comments.value = j.items || []
+      imConfigured.value = j.imConfigured !== false
+    }
   } catch {
     /* noop */
   }
 }
-
 async function refreshSession() {
   if (!room.value) return
   try {
@@ -240,23 +285,15 @@ async function refreshSession() {
     /* noop */
   }
 }
-
-async function ensureTuiLiveAnchor() {
-  if (tuiLiveEntered.value || !room.value) return
-  const tokRes = await fetch(`/api/rooms/${room.value.id}/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role: 'anchor' }),
-  })
-  const tok = await tokRes.json()
-  if (!tokRes.ok) throw new Error(tok.error || tokRes.statusText)
-  await enterAsAnchor({
-    sdkAppId: tok.sdkAppId,
-    userId: tok.userId,
-    userSig: tok.userSig,
-    liveId: tok.liveId,
-    liveName: room.value.title,
-  })
+async function refreshObs() {
+  if (!room.value) return
+  try {
+    const r = await fetch(`/api/rooms/${room.value.id}/studio/obs-endpoints`)
+    const j = await r.json()
+    if (r.ok) obs.value = j
+  } catch {
+    /* noop */
+  }
 }
 
 async function ensurePreviewRoom() {
@@ -277,64 +314,28 @@ async function ensurePreviewRoom() {
   })
 }
 
-function trySubscribeDigitalHuman() {
-  const dhId = session.value.ivhVirtualmanUserId
-  if (dhId) {
-    subscribeRemoteUser(dhId)
-    return
-  }
-  for (const uid of remoteUsers.value) {
-    if (uid.startsWith('vh_') || uid.includes('virtual')) {
-      subscribeRemoteUser(uid)
-      return
-    }
-  }
-  if (remoteUsers.value.length === 1) {
-    subscribeRemoteUser(remoteUsers.value[0])
-  }
-}
-
 async function onStartLive() {
   if (!room.value) return
   busy.value = true
   statusHint.value = ''
   err.value = ''
   try {
-    await ensureTuiLiveAnchor()
     const r = await fetch(`/api/rooms/${room.value.id}/studio/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ mode: 'production' }),
     })
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
-    await ensurePreviewRoom()
-    const tuiParts = []
-    if (j.tuiLive?.registered) tuiParts.push('云端 create_room 成功')
-    else if (j.tuiLive?.error) {
-      tuiParts.push(
-        `云端 create_room 未成功（不影响 startLive）：${j.tuiLive.error}。请在 .env 配置 App 管理员 TUILIVE_REST_ADMIN_USER_ID`,
-      )
-    }
-    statusHint.value = [
-      j.placeholder
-        ? '未配置 IVH，使用占位模式（无真实推流）'
-        : j.reused
-          ? '已复用现有数智人会话'
-          : '数智人会话已建立，欢迎语已播报',
-      'TUILiveKit 已 startLive，管理后台可按 liveId 检索',
-      ...tuiParts,
-    ]
-      .filter(Boolean)
-      .join(' · ')
+    if (j.obs) obs.value = j.obs
+    statusHint.value = j.placeholder
+      ? '未配置 IVH：占位模式（地址为示例，无真实流）'
+      : '数智人会话已建立，复制 OBS 地址开始拉流转推'
     await refreshSession()
-    trySubscribeDigitalHuman()
-    setTimeout(trySubscribeDigitalHuman, 2000)
-    setTimeout(trySubscribeDigitalHuman, 5000)
+    await ensurePreviewRoom()
   } catch (e) {
     err.value = e?.message || String(e)
     await exitPreviewRoom().catch(() => {})
-    await leaveTuiLive().catch(() => {})
   } finally {
     busy.value = false
   }
@@ -349,8 +350,8 @@ async function onStopLive() {
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
     await exitPreviewRoom()
-    await leaveTuiLive()
-    statusHint.value = '直播已结束（预览退房 + TUILiveKit endLive）'
+    obs.value = { active: false }
+    statusHint.value = '直播已结束'
     await refreshSession()
   } catch (e) {
     err.value = e?.message || String(e)
@@ -362,7 +363,12 @@ async function onStopLive() {
 async function onInjectComment() {
   if (!room.value) return
   injecting.value = true
-  const text = INJECT_SAMPLES[Math.floor(Math.random() * INJECT_SAMPLES.length)]
+  const samples = [
+    '这个政策外地户籍能享受吗？',
+    '补贴大概多久能到账呀？',
+    '线下办理地点在哪里？周末上班吗？',
+  ]
+  const text = samples[Math.floor(Math.random() * samples.length)]
   try {
     const r = await fetch(`/api/rooms/${room.value.id}/studio/comments`, {
       method: 'POST',
@@ -384,17 +390,18 @@ async function onGenerateReply(c) {
   if (!room.value) return
   rowBusy.value = c.id
   try {
-    const r = await fetch(
-      `/api/rooms/${room.value.id}/studio/comments/${c.id}/generate-reply`,
-      { method: 'POST' },
-    )
+    const r = await fetch(`/api/rooms/${room.value.id}/studio/comments/${c.id}/generate-reply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mod: modSlot.value }),
+    })
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
     await refreshComments()
     const updated = comments.value.find((x) => x.id === c.id)
     if (updated) {
       selectComment(updated)
-      statusHint.value = j.source === 'llm' ? 'LLM 已生成回复' : '占位回复已生成'
+      replySourceHint.value = j.source === 'llm' ? '已由 LLM 生成话术' : '已生成占位话术（未配置 LLM）'
     }
   } catch (e) {
     err.value = e?.message || String(e)
@@ -419,18 +426,18 @@ async function onSaveDraft() {
   }
 }
 
-async function onBroadcast(c) {
-  if (!room.value) return
-  const text = selectedId.value === c.id ? replyDraft.value.trim() : (c.replyDraft || '').trim()
+async function onBroadcast() {
+  if (!room.value || !selectedComment.value) return
+  const text = replyDraft.value.trim()
   if (!text) {
     err.value = '请先填写或生成回复文案'
     return
   }
-  rowBusy.value = `${c.id}-bc`
+  broadcasting.value = true
   err.value = ''
   try {
     const r = await fetch(
-      `/api/rooms/${room.value.id}/studio/comments/${c.id}/broadcast`,
+      `/api/rooms/${room.value.id}/studio/comments/${selectedComment.value.id}/broadcast`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -439,9 +446,28 @@ async function onBroadcast(c) {
     )
     const j = await r.json()
     if (!r.ok) throw new Error(j.error || r.statusText)
-    statusHint.value = '播报成功'
+    statusHint.value = j.placeholder ? '已播报（占位模式）' : '播报成功，数字人开始播报'
     await refreshComments()
-    await refreshSession()
+  } catch (e) {
+    err.value = e?.message || String(e)
+  } finally {
+    broadcasting.value = false
+  }
+}
+
+async function onRecall(c) {
+  if (!room.value) return
+  rowBusy.value = `${c.id}-rc`
+  try {
+    const r = await fetch(`/api/rooms/${room.value.id}/studio/comments/${c.id}/recall`, {
+      method: 'POST',
+    })
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || r.statusText)
+    statusHint.value = j.im?.recalled
+      ? '已从 IM 撤回该评论'
+      : `已标记撤回（IM 未撤回：${j.im?.reason || '—'}）`
+    await refreshComments()
   } catch (e) {
     err.value = e?.message || String(e)
   } finally {
@@ -449,43 +475,50 @@ async function onBroadcast(c) {
   }
 }
 
-watch(roomId, () => {
-  loadRoom()
-})
+async function onMute(c) {
+  if (!room.value) return
+  rowBusy.value = `${c.id}-mt`
+  try {
+    const r = await fetch(`/api/rooms/${room.value.id}/studio/comments/${c.id}/mute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seconds: 600 }),
+    })
+    const j = await r.json()
+    if (!r.ok) throw new Error(j.error || r.statusText)
+    statusHint.value = j.im?.muted ? '已禁言该用户 10 分钟' : `禁言未生效：${j.im?.reason || '—'}`
+    await refreshComments()
+  } catch (e) {
+    err.value = e?.message || String(e)
+  } finally {
+    rowBusy.value = ''
+  }
+}
 
-watch(
-  () => session.value.ivhVirtualmanUserId,
-  (uid) => {
-    if (uid && previewEntered.value) subscribeRemoteUser(uid)
-  },
-)
+watch(roomId, () => loadRoom())
 
 onMounted(async () => {
   await loadRoom()
   await refreshComments()
   await refreshSession()
-  if (liveActive.value) {
-    await ensureTuiLiveAnchor().catch(() => {})
-    await ensurePreviewRoom().catch(() => {})
-    trySubscribeDigitalHuman()
-  }
+  await refreshObs()
+  if (liveActive.value) await ensurePreviewRoom().catch(() => {})
   pollTimer = setInterval(async () => {
-    refreshComments()
+    await refreshComments()
     await refreshSession()
-    if (liveActive.value && previewEntered.value) trySubscribeDigitalHuman()
+    if (liveActive.value && !previewEntered.value) await ensurePreviewRoom().catch(() => {})
   }, 3000)
 })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   exitPreviewRoom()
-  leaveTuiLive()
 })
 </script>
 
 <style scoped>
 .studio {
-  max-width: 1280px;
+  max-width: 1480px;
   margin: 0 auto;
   padding: max(16px, env(safe-area-inset-top)) 20px max(40px, env(safe-area-inset-bottom));
 }
@@ -495,6 +528,17 @@ onUnmounted(() => {
 .studio__title {
   margin: 8px 0 4px;
   font-size: 1.35rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.mod-tag {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(79, 141, 255, 0.25);
+  color: #9ad4ff;
 }
 .studio__meta {
   color: rgba(255, 255, 255, 0.65);
@@ -503,7 +547,6 @@ onUnmounted(() => {
 }
 .studio__meta code {
   color: #b8e0ff;
-  font-size: 0.85em;
 }
 .studio__toolbar {
   display: flex;
@@ -513,11 +556,11 @@ onUnmounted(() => {
 }
 .studio__grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  grid-template-columns: 1.1fr 1fr 1.1fr;
+  gap: 16px;
   align-items: start;
 }
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .studio__grid {
     grid-template-columns: 1fr;
   }
@@ -533,11 +576,16 @@ onUnmounted(() => {
   font-size: 0.95rem;
   font-weight: 600;
 }
+.col__sub {
+  font-size: 0.72rem;
+  color: rgba(255, 200, 120, 0.8);
+  font-weight: 400;
+}
 .comment-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 520px;
+  max-height: 70vh;
   overflow-y: auto;
 }
 .comment-row {
@@ -551,6 +599,9 @@ onUnmounted(() => {
 .comment-row--selected {
   border-color: rgba(79, 141, 255, 0.65);
   background: rgba(79, 141, 255, 0.12);
+}
+.comment-row--recalled {
+  opacity: 0.5;
 }
 .comment-row__head {
   display: flex;
@@ -581,6 +632,14 @@ onUnmounted(() => {
   background: rgba(82, 196, 26, 0.2);
   color: #b7eb8f;
 }
+.badge--claim {
+  background: rgba(250, 173, 20, 0.2);
+  color: #ffd591;
+}
+.badge--mute {
+  background: rgba(255, 77, 79, 0.2);
+  color: #ffccc7;
+}
 .comment-row__text {
   margin: 0 0 8px;
   font-size: 14px;
@@ -590,6 +649,35 @@ onUnmounted(() => {
 .comment-row__actions {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+}
+.editor-origin {
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 0 0 10px;
+}
+.editor-origin__user {
+  color: #9ad4ff;
+}
+.reply-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  resize: vertical;
+}
+.editor-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
 }
 .stage-host {
   position: relative;
@@ -602,7 +690,6 @@ onUnmounted(() => {
 .stage {
   width: 100%;
   height: 100%;
-  min-height: 0;
   background: #000;
   display: flex;
   align-items: center;
@@ -616,7 +703,6 @@ onUnmounted(() => {
   justify-content: center;
   color: rgba(255, 255, 255, 0.55);
   font-size: 0.85rem;
-  pointer-events: none;
   text-align: center;
   padding: 12px;
   z-index: 1;
@@ -631,25 +717,38 @@ onUnmounted(() => {
   font-size: 0.78rem;
   word-break: break-all;
 }
-.reply-box {
-  margin-top: 16px;
+.obs-panel {
+  margin-top: 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   padding-top: 12px;
 }
-.reply-box__title {
-  margin: 0 0 8px;
+.obs-panel__title {
+  margin: 0 0 10px;
   font-size: 14px;
 }
-.reply-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  font: inherit;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(0, 0, 0, 0.35);
-  color: #fff;
-  resize: vertical;
+.obs-field {
+  margin-bottom: 12px;
+}
+.obs-field label {
+  display: block;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  margin-bottom: 4px;
+}
+.obs-copy {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.obs-copy code {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.72rem;
+  color: #b8e0ff;
+  word-break: break-all;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 6px 8px;
+  border-radius: 6px;
 }
 .back {
   color: #9ad4ff;
@@ -665,35 +764,28 @@ onUnmounted(() => {
   cursor: pointer;
   font-size: 0.88rem;
   line-height: 1.2;
-  transition: background 0.15s, border-color 0.15s;
 }
 .btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.32);
 }
 .btn--primary {
   border-color: transparent;
   background: linear-gradient(135deg, #4f8dff 0%, #7e5bff 100%);
-}
-.btn--primary:hover:not(:disabled) {
-  filter: brightness(1.08);
 }
 .btn--secondary {
   border-color: rgba(154, 212, 255, 0.45);
   background: rgba(79, 141, 255, 0.15);
   color: #d6ebff;
 }
-.btn--secondary:hover:not(:disabled) {
-  background: rgba(79, 141, 255, 0.28);
-}
 .btn--danger {
   border-color: rgba(255, 120, 117, 0.55);
   background: rgba(255, 77, 79, 0.22);
   color: #ffccc7;
 }
-.btn--danger:hover:not(:disabled) {
-  background: rgba(255, 77, 79, 0.38);
-  border-color: rgba(255, 120, 117, 0.75);
+.btn--warn {
+  border-color: rgba(250, 173, 20, 0.5);
+  background: rgba(250, 173, 20, 0.16);
+  color: #ffd591;
 }
 .btn--sm {
   padding: 5px 10px;
@@ -712,15 +804,16 @@ onUnmounted(() => {
 .small {
   font-size: 12px;
 }
+.xsmall {
+  font-size: 11px;
+}
 .hint {
   color: rgba(255, 255, 255, 0.55);
   font-size: 12px;
-  margin-top: 6px;
 }
 </style>
 
 <style>
-/* TRTC 注入的 video 节点：完整显示在 16:9 容器内（letterbox） */
 .studio .stage > div,
 .studio .stage video {
   width: 100% !important;
