@@ -11,6 +11,10 @@
 
 结束直播时调用 `destroy_room`（可选）。
 
+## 管理台直接对接直播间列表
+
+管理台底部「腾讯云直播间列表」面板调用 `GET /api/tuilive/rooms` → TUILiveKit `get_room_list`（`server/tuiLiveRest.mjs#listTuiLiveRooms`），与控制台/`TUILiveKit_Manager` 同源数据：展示 `RoomId`、`RoomName`、`Owner_Account`、观看次数、创建时间，并标注「本台创建」。文档：[获取直播列表](https://cloud.tencent.com/document/product/1071/76888)。
+
 ## 与画面可见性的关系
 
 管理后台列出的是**直播会话元数据**；画面是否可见取决于是否有流推入该房间：

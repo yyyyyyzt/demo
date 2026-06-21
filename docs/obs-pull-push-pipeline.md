@@ -63,7 +63,17 @@ rtmp://rtmp.rtc.qq.com/push/{liveId}?sdkappid={SDKAppID}&userid={obs_robot_*}&us
 - 拉流 → OBS 合成 → 再推流 → 观众，会叠加约数百 ms ~ 1s 延迟；人工筛选评论后播报的场景可接受。
 - 生产模式占用 1 路数智人并发 + 1 路 RTMP 入流；direct 模式占用 1 路数智人 TRTC 进房。
 
-## 六、未配置密钥时的降级
+## 六、异常中断后的并发清理（重要）
+
+数智人会话占用并发；若测试中**意外中断**（浏览器刷新/关闭、服务端重启），已生成的会话可能成为「遗留会话」继续占用并发，而服务端内存映射已丢失，无法用「结束直播」关闭。此时在**管理台**底部「数智人会话 · 并发管理」面板：
+
+- **刷新**：调用 `GET /api/ivh/sessions` → aPaaS `listsessionofuin` 列出**账号下所有进行中的会话**（不依赖本地内存），「遗留」标签标识不在本台跟踪内的会话。
+- **关闭**：`POST /api/ivh/sessions/:sessionId/close` 单个释放。
+- **全部关闭（释放并发）**：`POST /api/ivh/sessions/close-all` 逐个 `closesession`，一键回收全部并发。
+
+文档：[查询 uin 下的会话列表](https://cloud.tencent.com/document/product/1240/100393)、[关闭会话](https://cloud.tencent.com/document/product/1240/100385)。
+
+## 七、未配置密钥时的降级
 
 - 未配置 `IVH_*`：start 返回 `placeholder:true`，不产生真实流，地址字段为占位。
 - 未配置 `TRTC_SECRET_KEY`：推流地址签名失败，端点 `pushSignError` 字段给出原因（其余流程不阻塞）。

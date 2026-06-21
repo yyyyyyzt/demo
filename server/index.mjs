@@ -10,9 +10,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
-import { getIvhEnvDiagnostics } from './ivhApaas.mjs'
-import { closeRoomIvhSession } from './ivhPipeline.mjs'
-import { isTuiLiveRestConfigured } from './tuiLiveRest.mjs'
+import { getIvhEnvDiagnostics, isIvhConfigured, ivhCloseSession, ivhListSessionsOfUin } from './ivhApaas.mjs'
+import { closeRoomIvhSession, getKnownIvhSessions } from './ivhPipeline.mjs'
+import { isTuiLiveRestConfigured, listTuiLiveRooms } from './tuiLiveRest.mjs'
 import { disposeStudioRoom, mountStudioRoutes } from './studio.mjs'
 
 const require = createRequire(import.meta.url)
@@ -293,6 +293,103 @@ async function stopRoomDigitalHuman(req, res) {
   }
   res.json({ ok: true, ...result, job: job || null })
 }
+
+// —— 管理后台：TUILiveKit 直播间列表（与控制台同源） ——
+app.get('/api/tuilive/rooms', async (req, res) => {
+  if (!isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
+    res.status(503).json({
+      error: '未配置 TUILiveKit App 管理员（TUILIVE_REST_ADMIN_USER_ID / IM_REST_ADMIN_USER_ID）',
+      configured: false,
+    })
+    return
+  }
+  try {
+    const { rooms, next } = await listTuiLiveRooms({
+      sdkAppId: TRTC_SDK_APP_ID,
+      secretKey: TRTC_SECRET_KEY,
+      next: req.query.next,
+      count: req.query.count,
+    })
+    const local = loadRooms()
+    const items = rooms.map((r) => ({
+      ...r,
+      managedHere: local.some((x) => x.liveId === r.RoomId),
+    }))
+    res.json({ configured: true, items, next })
+  } catch (e) {
+    const code = e.statusCode || 502
+    res.status(code).json({ error: e.message || String(e), code: e.tuiLiveCode })
+  }
+})
+
+// —— 数智人并发管理：列出 / 关闭遗留会话（异常中断后释放并发） ——
+app.get('/api/ivh/sessions', async (_req, res) => {
+  if (!isIvhConfigured()) {
+    res.status(503).json({ error: '未配置 IVH_* 环境变量', configured: false })
+    return
+  }
+  try {
+    const sessions = await ivhListSessionsOfUin()
+    const known = new Map(getKnownIvhSessions().map((k) => [k.sessionId, k.roomInternalId]))
+    const rooms = loadRooms()
+    const items = sessions.map((s) => {
+      const roomInternalId = known.get(s.SessionId) || null
+      const room = roomInternalId ? rooms.find((r) => r.id === roomInternalId) : null
+      return {
+        sessionId: s.SessionId,
+        userId: s.UserId,
+        status: s.SessionStatus,
+        playStreamAddr: s.PlayStreamAddr || null,
+        isSessionStarted: s.IsSessionStarted,
+        tracked: Boolean(roomInternalId),
+        roomInternalId,
+        roomTitle: room?.title || null,
+        liveId: room?.liveId || null,
+      }
+    })
+    res.json({ configured: true, items })
+  } catch (e) {
+    const code = e.statusCode || 502
+    res.status(code).json({ error: e.message || String(e), ivhHeader: e.ivhHeader })
+  }
+})
+
+app.post('/api/ivh/sessions/:sessionId/close', async (req, res) => {
+  if (!isIvhConfigured()) {
+    res.status(503).json({ error: '未配置 IVH_* 环境变量' })
+    return
+  }
+  try {
+    await ivhCloseSession(req.params.sessionId)
+    res.json({ ok: true, sessionId: req.params.sessionId })
+  } catch (e) {
+    const code = e.statusCode || 502
+    res.status(code).json({ error: e.message || String(e), ivhHeader: e.ivhHeader })
+  }
+})
+
+app.post('/api/ivh/sessions/close-all', async (_req, res) => {
+  if (!isIvhConfigured()) {
+    res.status(503).json({ error: '未配置 IVH_* 环境变量' })
+    return
+  }
+  try {
+    const sessions = await ivhListSessionsOfUin()
+    const results = []
+    for (const s of sessions) {
+      try {
+        await ivhCloseSession(s.SessionId)
+        results.push({ sessionId: s.SessionId, closed: true })
+      } catch (e) {
+        results.push({ sessionId: s.SessionId, closed: false, reason: e?.message || String(e) })
+      }
+    }
+    res.json({ ok: true, total: sessions.length, results })
+  } catch (e) {
+    const code = e.statusCode || 502
+    res.status(code).json({ error: e.message || String(e), ivhHeader: e.ivhHeader })
+  }
+})
 
 mountStudioRoutes(app, {
   loadRooms,

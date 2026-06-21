@@ -91,6 +91,12 @@ POST /api/rooms/:id/studio/comments/:cid/generate-reply # 模型回复
 POST /api/rooms/:id/studio/comments/:cid/broadcast      # 播报
 POST /api/rooms/:id/studio/comments/:cid/recall         # 撤回（IM）
 POST /api/rooms/:id/studio/comments/:cid/mute           # 禁言（IM）
+
+# 管理后台
+GET  /api/tuilive/rooms                # TUILiveKit 直播间列表（管理后台同源）
+GET  /api/ivh/sessions                 # 账号下进行中的数智人会话（含遗留）
+POST /api/ivh/sessions/:sessionId/close  # 关闭指定会话，释放并发
+POST /api/ivh/sessions/close-all         # 一键关闭全部会话，释放并发
 ```
 
 历史端点（旧 IM、presubmit、`digital-human/jobs` 等）见 `server/archive/legacyRoutes.mjs`，设置 `ARCHIVE_LEGACY=1` 后启用。

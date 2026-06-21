@@ -158,6 +158,19 @@ export async function ivhCloseSession(sessionId) {
   })
 }
 
+/**
+ * 查询当前账号（uin）下所有进行中的数智人会话。
+ * 用于异常中断后清理遗留会话、释放并发（不依赖本地内存映射）。
+ * 文档：https://cloud.tencent.com/document/product/1240/100393
+ * @returns {Promise<Array<{ UserId:string, SessionId:string, SessionStatus:number, PlayStreamAddr?:string, DriverType?:number, IsSessionStarted?:boolean }>>}
+ */
+export async function ivhListSessionsOfUin() {
+  const json = await ivhPost('/v2/ivh/sessionmanager/sessionmanagerservice/listsessionofuin', {
+    ReqId: reqId32(),
+  })
+  return json.Payload?.Sessions || []
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
 }

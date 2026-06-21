@@ -15,6 +15,15 @@ const lastOpenIvhSessionByRoomInternalId = new Map()
 /** roomId -> { sessionId, ivhUserId, ivhVirtualmanUserId } */
 const sessionMetaByRoom = new Map()
 
+/** 返回服务端内存当前跟踪的会话（sessionId → 房间内部 id），用于标注遗留会话 */
+export function getKnownIvhSessions() {
+  const out = []
+  for (const [roomInternalId, sessionId] of lastOpenIvhSessionByRoomInternalId) {
+    out.push({ sessionId, roomInternalId })
+  }
+  return out
+}
+
 export function getRoomIvhSessionMeta(roomInternalId) {
   const sessionId = lastOpenIvhSessionByRoomInternalId.get(roomInternalId)
   if (!sessionId) return null

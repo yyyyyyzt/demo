@@ -88,6 +88,28 @@ export async function createTuiLiveRoom(p) {
 }
 
 /**
+ * 拉取 TUILiveKit 直播间列表（管理后台同源数据），分页。
+ * 文档：https://cloud.tencent.com/document/product/1071/76888
+ * @param {{ sdkAppId: string|number, secretKey: string, adminUserId?: string, next?: string, count?: number }} p
+ * @returns {Promise<{ rooms: Array<object>, next: string }>}
+ */
+export async function listTuiLiveRooms(p) {
+  const adminUserId = p.adminUserId || getTuiLiveRestAdminUserId()
+  if (!adminUserId) {
+    const err = new Error('未配置 TUILIVE_REST_ADMIN_USER_ID 或 IM_REST_ADMIN_USER_ID')
+    err.statusCode = 503
+    throw err
+  }
+  const json = await liveEnginePost(
+    'get_room_list',
+    { Next: String(p.next || ''), Count: Math.min(Math.max(Number(p.count) || 20, 1), 20) },
+    { sdkAppId: p.sdkAppId, secretKey: p.secretKey, adminUserId },
+  )
+  const resp = json.Response || {}
+  return { rooms: resp.RoomList || [], next: resp.Next || '' }
+}
+
+/**
  * @param {{ sdkAppId: string|number, secretKey: string, adminUserId?: string, liveId: string }} p
  */
 export async function destroyTuiLiveRoom(p) {

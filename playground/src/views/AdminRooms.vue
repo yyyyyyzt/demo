@@ -20,7 +20,7 @@
     </section>
 
     <section class="card">
-      <h2 class="card__title">列表</h2>
+      <h2 class="card__title">本地直播间</h2>
       <p v-if="loading">加载中…</p>
       <ul v-else class="rooms">
         <li v-for="r in rooms" :key="r.id" class="room">
@@ -66,6 +66,73 @@
         </li>
       </ul>
     </section>
+
+    <section class="card">
+      <div class="card__bar">
+        <h2 class="card__title">腾讯云直播间列表（管理后台同源）</h2>
+        <button type="button" class="btn btn--sm" :disabled="tuiLoading" @click="loadTuiRooms">
+          {{ tuiLoading ? '刷新中…' : '刷新' }}
+        </button>
+      </div>
+      <p v-if="tuiError" class="err">{{ tuiError }}</p>
+      <p v-else-if="!tuiRooms.length" class="muted small">暂无数据（需配置 TUILiveKit App 管理员并已开播登记）。</p>
+      <ul v-else class="mini-list">
+        <li v-for="r in tuiRooms" :key="r.RoomId" class="mini-row">
+          <div class="mini-row__main">
+            <strong>{{ r.RoomName || r.RoomId }}</strong>
+            <code>{{ r.RoomId }}</code>
+            <span v-if="r.managedHere" class="tag tag--ok">本台创建</span>
+          </div>
+          <div class="mini-row__sub">
+            房主 {{ r.Owner_Account }} · 观看 {{ r.ViewCount ?? 0 }} · {{ formatTs(r.CreateTime) }}
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <div class="card__bar">
+        <h2 class="card__title">数智人会话 · 并发管理</h2>
+        <div class="card__bar-actions">
+          <button type="button" class="btn btn--sm" :disabled="ivhLoading" @click="loadIvhSessions">
+            {{ ivhLoading ? '刷新中…' : '刷新' }}
+          </button>
+          <button
+            type="button"
+            class="btn btn--sm btn--danger"
+            :disabled="ivhClosing || !ivhSessions.length"
+            @click="closeAllIvh"
+          >
+            {{ ivhClosing ? '清理中…' : '全部关闭（释放并发）' }}
+          </button>
+        </div>
+      </div>
+      <p class="muted xsmall">
+        异常中断（如刷新/重启）导致会话遗留、占用并发时，可在此查看账号下所有进行中的数智人会话并逐个或一键关闭。
+      </p>
+      <p v-if="ivhError" class="err">{{ ivhError }}</p>
+      <p v-else-if="!ivhSessions.length" class="muted small">当前无进行中的数智人会话。</p>
+      <ul v-else class="mini-list">
+        <li v-for="s in ivhSessions" :key="s.sessionId" class="mini-row">
+          <div class="mini-row__main">
+            <code>{{ s.sessionId }}</code>
+            <span v-if="s.tracked" class="tag tag--ok">{{ s.roomTitle || '本台' }}</span>
+            <span v-else class="tag tag--warn">遗留</span>
+          </div>
+          <div class="mini-row__sub">
+            user {{ s.userId }} · 状态 {{ ivhStatusLabel(s.status) }}
+            <button
+              type="button"
+              class="btn btn--xs btn--danger"
+              :disabled="ivhClosingId === s.sessionId"
+              @click="closeIvh(s.sessionId)"
+            >
+              {{ ivhClosingId === s.sessionId ? '…' : '关闭' }}
+            </button>
+          </div>
+        </li>
+      </ul>
+    </section>
   </div>
 </template>
 
@@ -86,6 +153,88 @@ async function copyLink(url) {
     topError.value = ''
   } catch {
     /* 剪贴板不可用时忽略，用户可手动复制 */
+  }
+}
+
+const tuiRooms = ref([])
+const tuiLoading = ref(false)
+const tuiError = ref('')
+const ivhSessions = ref([])
+const ivhLoading = ref(false)
+const ivhClosing = ref(false)
+const ivhClosingId = ref('')
+const ivhError = ref('')
+
+function formatTs(sec) {
+  if (!sec) return ''
+  try {
+    return new Date(Number(sec) * 1000).toLocaleString()
+  } catch {
+    return String(sec)
+  }
+}
+function ivhStatusLabel(st) {
+  return { 1: '进行中', 2: '已关闭', 3: '准备中', 4: '建流失败' }[st] || st
+}
+
+async function loadTuiRooms() {
+  tuiLoading.value = true
+  tuiError.value = ''
+  try {
+    const res = await fetch('/api/tuilive/rooms')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || res.statusText)
+    tuiRooms.value = data.items || []
+  } catch (e) {
+    tuiError.value = e?.message || String(e)
+    tuiRooms.value = []
+  } finally {
+    tuiLoading.value = false
+  }
+}
+
+async function loadIvhSessions() {
+  ivhLoading.value = true
+  ivhError.value = ''
+  try {
+    const res = await fetch('/api/ivh/sessions')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || res.statusText)
+    ivhSessions.value = data.items || []
+  } catch (e) {
+    ivhError.value = e?.message || String(e)
+    ivhSessions.value = []
+  } finally {
+    ivhLoading.value = false
+  }
+}
+
+async function closeIvh(sessionId) {
+  ivhClosingId.value = sessionId
+  try {
+    const res = await fetch(`/api/ivh/sessions/${sessionId}/close`, { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || res.statusText)
+    await loadIvhSessions()
+  } catch (e) {
+    ivhError.value = e?.message || String(e)
+  } finally {
+    ivhClosingId.value = ''
+  }
+}
+
+async function closeAllIvh() {
+  if (!window.confirm('确定关闭账号下所有进行中的数智人会话以释放并发？')) return
+  ivhClosing.value = true
+  try {
+    const res = await fetch('/api/ivh/sessions/close-all', { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || res.statusText)
+    await loadIvhSessions()
+  } catch (e) {
+    ivhError.value = e?.message || String(e)
+  } finally {
+    ivhClosing.value = false
   }
 }
 
@@ -145,7 +294,11 @@ async function dissolveRoom(room) {
   }
 }
 
-onMounted(loadRooms)
+onMounted(() => {
+  loadRooms()
+  loadTuiRooms()
+  loadIvhSessions()
+})
 </script>
 
 <style scoped>
@@ -277,6 +430,88 @@ onMounted(loadRooms)
   padding: 4px 8px;
   border-radius: 6px;
   word-break: break-all;
+}
+
+.card__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.card__bar .card__title {
+  margin: 0;
+}
+
+.card__bar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mini-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mini-row {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mini-row:last-child {
+  border-bottom: none;
+}
+
+.mini-row__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mini-row__main code {
+  font-size: 0.72rem;
+  color: #b8e0ff;
+}
+
+.mini-row__sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.tag {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.tag--ok {
+  background: rgba(82, 196, 26, 0.2);
+  color: #b7eb8f;
+}
+
+.tag--warn {
+  background: rgba(250, 173, 20, 0.2);
+  color: #ffd591;
+}
+
+.muted {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.xsmall {
+  font-size: 11px;
 }
 
 .btn--ghost {
