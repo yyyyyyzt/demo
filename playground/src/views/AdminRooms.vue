@@ -3,10 +3,10 @@
     <header class="admin__head">
       <h1 class="admin__title">数字人直播 · 管理台</h1>
       <p class="admin__sub">
-        生产标准演示流程：1) 创建直播间；2) 进入「评论播控台」点「开始直播」，复制
+        创建直播间即通过<strong>管理后台同源</strong>方式（TUILiveKit）在腾讯云登记，线上真人直播管理后台可直接看到这些数字人直播间。
+        流程：1) 创建直播间；2) 进入「评论播控台」点「开始直播」，复制
         <strong>OBS 拉流/推流地址</strong>，由专业 OBS 拉数字人画面 → 抠像/虚拟背景/装修 → 推回直播间；
-        3) 把<strong>观众链接</strong>发给真实观众（手机即可观看）；4) 评论真走腾讯
-        <code>IM</code>，播控台可生成模型回复、二次编辑后播报，并支持撤回、禁言；多名管理员用各自链接协作。
+        3) 把<strong>观众链接</strong>发给真实观众；4) 评论真走腾讯 <code>IM</code>，可生成模型回复、编辑后播报，支持撤回、禁言；多管理员用各自链接协作。
       </p>
     </header>
 
@@ -20,11 +20,15 @@
     </section>
 
     <section class="card">
-      <h2 class="card__title">本地直播间</h2>
+      <h2 class="card__title">直播间（创建即登记到管理后台）</h2>
       <p v-if="loading">加载中…</p>
       <ul v-else class="rooms">
         <li v-for="r in rooms" :key="r.id" class="room">
-          <div class="room__title">{{ r.title }}</div>
+          <div class="room__title">
+            {{ r.title }}
+            <span v-if="r.cloudRegistered" class="tag tag--ok">管理后台可见</span>
+            <span v-else class="tag tag--warn" :title="r.cloudError || ''">仅本地（未登记）</span>
+          </div>
           <div class="room__meta">
             <code>{{ r.liveId }}</code>
           </div>
@@ -62,29 +66,6 @@
               <code class="link-row__url">{{ origin }}/studio/{{ r.id }}?mod=b</code>
               <button type="button" class="btn btn--xs" @click="copyLink(`${origin}/studio/${r.id}?mod=b`)">复制</button>
             </div>
-          </div>
-        </li>
-      </ul>
-    </section>
-
-    <section class="card">
-      <div class="card__bar">
-        <h2 class="card__title">腾讯云直播间列表（管理后台同源）</h2>
-        <button type="button" class="btn btn--sm" :disabled="tuiLoading" @click="loadTuiRooms">
-          {{ tuiLoading ? '刷新中…' : '刷新' }}
-        </button>
-      </div>
-      <p v-if="tuiError" class="err">{{ tuiError }}</p>
-      <p v-else-if="!tuiRooms.length" class="muted small">暂无数据（需配置 TUILiveKit App 管理员并已开播登记）。</p>
-      <ul v-else class="mini-list">
-        <li v-for="r in tuiRooms" :key="r.RoomId" class="mini-row">
-          <div class="mini-row__main">
-            <strong>{{ r.RoomName || r.RoomId }}</strong>
-            <code>{{ r.RoomId }}</code>
-            <span v-if="r.managedHere" class="tag tag--ok">本台创建</span>
-          </div>
-          <div class="mini-row__sub">
-            房主 {{ r.Owner_Account }} · 观看 {{ r.ViewCount ?? 0 }} · {{ formatTs(r.CreateTime) }}
           </div>
         </li>
       </ul>
@@ -156,41 +137,14 @@ async function copyLink(url) {
   }
 }
 
-const tuiRooms = ref([])
-const tuiLoading = ref(false)
-const tuiError = ref('')
 const ivhSessions = ref([])
 const ivhLoading = ref(false)
 const ivhClosing = ref(false)
 const ivhClosingId = ref('')
 const ivhError = ref('')
 
-function formatTs(sec) {
-  if (!sec) return ''
-  try {
-    return new Date(Number(sec) * 1000).toLocaleString()
-  } catch {
-    return String(sec)
-  }
-}
 function ivhStatusLabel(st) {
   return { 1: '进行中', 2: '已关闭', 3: '准备中', 4: '建流失败' }[st] || st
-}
-
-async function loadTuiRooms() {
-  tuiLoading.value = true
-  tuiError.value = ''
-  try {
-    const res = await fetch('/api/tuilive/rooms')
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || res.statusText)
-    tuiRooms.value = data.items || []
-  } catch (e) {
-    tuiError.value = e?.message || String(e)
-    tuiRooms.value = []
-  } finally {
-    tuiLoading.value = false
-  }
 }
 
 async function loadIvhSessions() {
@@ -265,6 +219,9 @@ async function createRoom() {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || res.statusText)
     newTitle.value = ''
+    topError.value = data.cloudRegistered
+      ? ''
+      : `直播间已创建，但未登记到管理后台：${data.cloudError || '未配置 TUILiveKit'}`
     await loadRooms()
   } catch (e) {
     topError.value = e?.message || String(e)
@@ -296,7 +253,6 @@ async function dissolveRoom(room) {
 
 onMounted(() => {
   loadRooms()
-  loadTuiRooms()
   loadIvhSessions()
 })
 </script>

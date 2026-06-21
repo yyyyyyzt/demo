@@ -12,7 +12,13 @@ import { createRequire } from 'node:module'
 import { v4 as uuidv4 } from 'uuid'
 import { getIvhEnvDiagnostics, isIvhConfigured, ivhCloseSession, ivhListSessionsOfUin } from './ivhApaas.mjs'
 import { closeRoomIvhSession, getKnownIvhSessions } from './ivhPipeline.mjs'
-import { isTuiLiveRestConfigured, listTuiLiveRooms } from './tuiLiveRest.mjs'
+import {
+  createTuiLiveRoom,
+  destroyTuiLiveRoom,
+  isTuiLiveRestConfigured,
+  listTuiLiveRooms,
+} from './tuiLiveRest.mjs'
+import { obsRobotUserId } from './trtcRtmp.mjs'
 import { disposeStudioRoom, mountStudioRoutes } from './studio.mjs'
 
 const require = createRequire(import.meta.url)
@@ -159,14 +165,40 @@ app.get('/api/rooms', (req, res) => {
   res.json({ rooms })
 })
 
-app.post('/api/rooms', (req, res) => {
+app.post('/api/rooms', async (req, res) => {
   const title = String(req.body?.title || '未命名直播间').trim() || '未命名直播间'
   const liveId = `live_${uuidv4().replace(/-/g, '').slice(0, 12)}`
+  const ownerAccount = obsRobotUserId(liveId)
+
+  // 统一走管理后台同源创建：直接在腾讯云 TUILiveKit 登记直播间，
+  // 线上真人直播管理后台即可看到该（数字人）直播间。
+  let cloudRegistered = false
+  let cloudError = null
+  if (isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
+    try {
+      await createTuiLiveRoom({
+        sdkAppId: TRTC_SDK_APP_ID,
+        secretKey: TRTC_SECRET_KEY,
+        liveId,
+        title,
+        ownerAccount,
+      })
+      cloudRegistered = true
+    } catch (e) {
+      cloudError = e?.message || String(e)
+    }
+  } else {
+    cloudError = '未配置 TUILiveKit App 管理员，仅本地创建（生产环境配置后将自动登记到管理后台）'
+  }
+
   const room = {
     id: uuidv4(),
     liveId,
     title,
+    ownerAccount,
     broadcastStatus: 'idle',
+    cloudRegistered,
+    cloudError,
     createdAt: new Date().toISOString(),
   }
   const rooms = loadRooms()
@@ -212,9 +244,23 @@ app.delete('/api/rooms/:id', async (req, res) => {
   const [room] = rooms.splice(idx, 1)
   await purgeRoomRuntimeState(room.id)
   saveRooms(rooms)
+
+  let cloudDestroyed = false
+  let cloudError = null
+  if (isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
+    try {
+      await destroyTuiLiveRoom({ sdkAppId: TRTC_SDK_APP_ID, secretKey: TRTC_SECRET_KEY, liveId: room.liveId })
+      cloudDestroyed = true
+    } catch (e) {
+      cloudError = e?.message || String(e)
+    }
+  }
+
   res.json({
     ok: true,
     removed: { id: room.id, liveId: room.liveId, title: room.title },
+    cloudDestroyed,
+    cloudError,
   })
 })
 

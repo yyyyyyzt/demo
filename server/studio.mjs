@@ -15,11 +15,6 @@ import {
   getRoomIvhSessionMeta,
 } from './ivhPipeline.mjs'
 import { isIvhConfigured } from './ivhApaas.mjs'
-import {
-  createTuiLiveRoom,
-  destroyTuiLiveRoom,
-  isTuiLiveRestConfigured,
-} from './tuiLiveRest.mjs'
 import { buildObsPushEndpoint, obsRobotUserId } from './trtcRtmp.mjs'
 import {
   imForbidSendMsg,
@@ -28,7 +23,6 @@ import {
   isImRestConfigured,
 } from './imRest.mjs'
 
-const TUILIVE_REGISTER_ON_STUDIO = process.env.TUILIVE_REGISTER_ON_STUDIO !== '0'
 const DEFAULT_MUTE_SECONDS = Number(process.env.STUDIO_MUTE_SECONDS || 600)
 
 function anchorOwnerAccount(liveId) {
@@ -511,22 +505,7 @@ export function mountStudioRoutes(app, ctx) {
       obsSignError = e?.message || String(e)
     }
 
-    let tuiLive = { skipped: true }
-    if (TUILIVE_REGISTER_ON_STUDIO && isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
-      try {
-        await createTuiLiveRoom({
-          sdkAppId: TRTC_SDK_APP_ID,
-          secretKey: TRTC_SECRET_KEY,
-          liveId: room.liveId,
-          title: room.title,
-          ownerAccount: anchorUserId,
-        })
-        tuiLive = { registered: true, liveId: room.liveId }
-      } catch (e) {
-        tuiLive = { registered: false, error: e?.message || String(e), code: e?.tuiLiveCode }
-      }
-    }
-
+    // 房间登记在「创建房间」时已完成（管理后台同源），开播不再重复 create_room。
     const endpoints = {
       active: true,
       mode,
@@ -553,7 +532,6 @@ export function mountStudioRoutes(app, ctx) {
           mode,
           ivhSessionId: null,
           placeholder: true,
-          tuiLive,
           obs: endpoints,
         })
         return
@@ -585,7 +563,6 @@ export function mountStudioRoutes(app, ctx) {
         ivhSessionId: ensured.sessionId,
         ivhVirtualmanUserId: ensured.ivhVirtualmanUserId,
         reused: ensured.reused,
-        tuiLive,
         obs: endpoints,
       })
     } catch (e) {
@@ -614,21 +591,8 @@ export function mountStudioRoutes(app, ctx) {
     obsEndpointsByRoom.delete(room.id)
     setRoomBroadcastStatus(rooms, room, 'idle', saveRooms)
 
-    let tuiLive = { skipped: true }
-    if (TUILIVE_REGISTER_ON_STUDIO && isTuiLiveRestConfigured(TRTC_SDK_APP_ID, TRTC_SECRET_KEY)) {
-      try {
-        await destroyTuiLiveRoom({
-          sdkAppId: TRTC_SDK_APP_ID,
-          secretKey: TRTC_SECRET_KEY,
-          liveId: room.liveId,
-        })
-        tuiLive = { destroyed: true }
-      } catch (e) {
-        tuiLive = { destroyed: false, error: e?.message || String(e) }
-      }
-    }
-
-    res.json({ ok: true, ...result, job: job || null, tuiLive })
+    // 结束直播仅关闭数智人会话；直播间登记保留在管理后台，解散房间时才 destroy_room。
+    res.json({ ok: true, ...result, job: job || null })
   })
 }
 
