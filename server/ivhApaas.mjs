@@ -97,6 +97,26 @@ export async function ivhCreateTrtcSession({
   return ivhPost('/v2/ivh/sessionmanager/sessionmanagerservice/createsession', payload)
 }
 
+/**
+ * 创建 rtmp 协议会话：数智人渲染后产出一路可拉取的播放地址（PlayStreamAddr），
+ * 供专业 OBS 等工具「拉流 → 抠像/装修 → 转推」到直播间。数智人本身不进 TRTC 房间。
+ * 若传入 cssCustomPushUrl，则数智人直接推到该自定义云直播地址，接口不再返回 PlayStreamAddr。
+ * @param {{ virtualmanProjectId: string, ivhUserId: string, cssCustomPushUrl?: string }} p
+ */
+export async function ivhCreateRtmpSession({ virtualmanProjectId, ivhUserId, cssCustomPushUrl }) {
+  const payload = {
+    ReqId: reqId32(),
+    VirtualmanProjectId: virtualmanProjectId,
+    UserId: ivhUserId,
+    Protocol: 'rtmp',
+    DriverType: 1,
+  }
+  if (cssCustomPushUrl) {
+    payload.ProtocolOption = { CssCustomPushUrl: String(cssCustomPushUrl) }
+  }
+  return ivhPost('/v2/ivh/sessionmanager/sessionmanagerservice/createsession', payload)
+}
+
 export async function ivhStatSession(sessionId) {
   return ivhPost('/v2/ivh/sessionmanager/sessionmanagerservice/statsession', {
     ReqId: reqId32(),
