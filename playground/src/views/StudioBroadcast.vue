@@ -563,16 +563,18 @@ onUnmounted(() => {
 }
 .studio__grid {
   display: grid;
-  grid-template-columns: 1.1fr 1fr 1.1fr;
+  /* minmax(0, …) 锁定三列宽度，避免长地址/视频画布把 fr 轨道撑大导致列宽漂移 */
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.1fr);
   gap: 16px;
   align-items: start;
 }
 @media (max-width: 1100px) {
   .studio__grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .col {
+  min-width: 0;
   background: rgba(0, 0, 0, 0.28);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
